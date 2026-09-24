@@ -29,13 +29,23 @@ const QUALITIES = ['ultra', 'high', 'low'];
 // Phones get 'high': modern phones (A17/A18-class) handle AO, grass and cascaded shadows fine
 let quality = QUALITIES.includes(location.hash.slice(1)) ? location.hash.slice(1) : isTouch ? 'high' : 'ultra';
 const renderer = new THREE.WebGLRenderer({ antialias: false, stencil: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-const pixelRatio = () => Math.min(devicePixelRatio, quality === 'ultra' ? 1.5 : quality === 'high' ? (isTouch ? 1.75 : 1.25) : 1);
+// Phones render at ~1.2× (not the panel's native 3×) — each post-processing buffer scales with this squared
+const LITE = isTouch;
+const pixelRatio = () => Math.min(devicePixelRatio, quality === 'ultra' ? 1.5 : quality === 'high' ? (LITE ? 1.2 : 1.25) : 1);
 renderer.setPixelRatio(pixelRatio());
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.NoToneMapping; // tone mapping runs in the post stack
 renderer.localClippingEnabled = true; // for the lake mirror clip plane
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
+// If the GPU resets (usually memory pressure on phones), reload one quality step lower instead of freezing
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  const next = { ultra: 'high', high: 'low', low: 'low' }[quality];
+  document.getElementById('loadmsg').textContent = 'Graphics reset — reloading at ' + next.toUpperCase() + ' quality…';
+  document.getElementById('loading').classList.remove('hidden');
+  setTimeout(() => { location.hash = next; location.reload(); }, 900);
+});
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 30000);
@@ -48,7 +58,7 @@ scene.environment = skyObj.env; scene.environmentIntensity = 0.75;
 scene.fog = null; // atmosphere is a depth-based post effect (src/atmosphere.js)
 // Cascaded shadows: crisp near the camera, still present on distant buildings
 const csm = new CSM({
-  maxFar: quality === 'low' ? 500 : 1000, cascades: quality === 'low' ? 2 : 3, mode: 'practical', parent: scene, shadowMapSize: quality === 'ultra' ? 3072 : quality === 'high' ? 2048 : 1024,
+  maxFar: quality === 'low' ? 500 : 1000, cascades: quality === 'low' || LITE ? 2 : 3, mode: 'practical', parent: scene, shadowMapSize: LITE ? 1536 : quality === 'ultra' ? 3072 : quality === 'high' ? 2048 : 1024,
   lightDirection: sunDir.clone().negate(), camera, lightIntensity: 4.2, lightNear: 1, lightFar: 3000, shadowBias: -0.00012,
 });
 csm.fade = true;
@@ -121,7 +131,8 @@ async function init() {
   status('Loading campus survey (OpenStreetMap)…'); await tick();
   const data = await (await fetch('data/campus.json')).json();
   status('Loading scanned materials (Poly Haven, CC0)…'); await tick();
-  T.scan = await loadScans(renderer, (d, n) => status(`Loading scanned materials… ${d}/${n}`));
+  T.lite = LITE;
+  T.scan = await loadScans(renderer, (d, n) => status(`Loading scanned materials… ${d}/${n}`), LITE ? 'assets/tex/512/' : 'assets/tex/');
   const before = new Set(scene.children);
   status('Laying LiDAR terrain…'); await tick();
   const b64 = await (await fetch('data/dtm.b64.txt')).text();
@@ -135,20 +146,20 @@ async function init() {
   T.skipTrees = true;
   world = buildWorld(data, T, scene, { sunDir });
   status('Growing 8,700 trees (EZ-Tree)…'); await tick();
-  try { ezTrees = await buildEzTrees(data.trees, scene, renderer, quality === 'ultra' ? { nearR: 150, nearMax: 700, res: 320 } : quality === 'high' ? { nearR: 90, nearMax: 320, res: 256 } : { nearR: 50, nearMax: 120, res: 192 }); console.log('trees', ezTrees.variants.join(' | ')); }
+  try { ezTrees = await buildEzTrees(data.trees, scene, renderer, quality === 'ultra' ? { nearR: 150, nearMax: 700, res: 320 } : quality === 'high' ? (LITE ? { nearR: 70, nearMax: 160, res: 160, lite: true } : { nearR: 90, nearMax: 320, res: 256 }) : { nearR: 50, nearMax: 120, res: 192 }); console.log('trees', ezTrees.variants.join(' | ')); }
   catch (e) { console.warn('ez-tree failed, using fallback trees', e); T.skipTrees = false; }
   status('Gilding the Dome…'); await tick();
   L = buildLandmarks(data, T, scene, world);
   void 0;
   status('Filling the lots for kickoff…'); await tick();
   status('Dressing the crowd (Rocketbox avatars)…'); await tick();
-  const kit = await loadKit((d, n) => status(`Dressing the crowd… ${d}/${n}`)).catch((e) => { console.warn(e); return null; });
+  const kit = await loadKit((d, n) => status(`Dressing the crowd… ${d}/${n}`), { lite: LITE }).catch((e) => { console.warn(e); return null; });
   status('Filling the lots for kickoff…'); await tick();
-  people = buildPeople(data, world, L, scene, kit, quality === 'ultra' ? { near: 140, nearR: 60, farTris: 1100 } : quality === 'high' ? { near: 90, nearR: 45, farTris: 800 } : { near: 40, nearR: 30, farTris: 400 });
+  people = buildPeople(data, world, L, scene, kit, quality === 'ultra' ? { near: 140, nearR: 60, farTris: 1100 } : quality === 'high' ? (LITE ? { near: 40, nearR: 35, farTris: 450, farMax: 2500, density: 0.45 } : { near: 90, nearR: 45, farTris: 800 }) : { near: 40, nearR: 30, farTris: 400 });
   if (kit) { const ra = makeRocketAgent(kit, cloneAvatar); if (ra) agent = ra; }
   status('Placing benches, lamps & crosswalks…'); await tick();
   buildProps(data, scene);
-  grass = quality === 'low' ? null : buildGrass(data, scene);
+  grass = quality === 'low' ? null : buildGrass(data, scene, LITE ? { patchSize: 26, density: 45 } : undefined);
   buildUndergrowth(data, scene, T);
   leaves = buildFallingLeaves(scene, T, quality === 'low' ? 300 : 900);
   status('Opening Hesburgh Library…'); await tick();
@@ -157,7 +168,6 @@ async function init() {
   const outdoor = world.colliders.filter((c) => !lib || (c.id !== LIB_BASE && c.id !== LIB_TOWER));
   if (lib) outdoor.push({ segs: lib.outdoorSegs });
   collider = new Collider([...outdoor, ...world.waterPolys.map((w) => ({ o: w.o, hl: [] }))]);
-  if (lib) for (const lv of lib.floors) lib.levels[lv].collider = new Collider([{ segs: lib.levels[lv].segs }], 12);
   hud = buildHud(data, L);
   worldObjs = scene.children.filter((c) => !before.has(c));
   scene.add(agent);
@@ -346,7 +356,7 @@ function loop() {
   frames++; fpsT += dt; if (fpsT > 1) { $('fps').textContent = `${frames} fps · ${quality}`; frames = 0; fpsT = 0; }
 }
 const groundY = () => (player.level != null && lib ? lib.floorY(player.level) : TER.h(player.x, player.y));
-const activeCollider = () => (player.level != null && lib ? lib.levels[player.level].collider : collider);
+const activeCollider = () => (player.level != null && lib ? lib.ensure(player.level).collider : collider);
 function setLevel(lv, x, y) {
   player.level = lv;
   if (lv != null && x != null) { const p = lib.arrive(lv, x, y); [player.x, player.y] = p; }

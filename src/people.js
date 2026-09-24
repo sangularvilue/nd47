@@ -66,14 +66,14 @@ export function buildPeople(data, world, L, scene, kit, opts = {}) {
     const c = r.p[(r.p.length / 2) | 0];
     const d = dStad(c[0], c[1]);
     if (Math.abs(c[0]) > 1100 || c[1] > 1000 || c[1] < -1150) continue;
-    const dens = d < 400 ? 1 / 5 : d < 900 ? 1 / 14 : 1 / 45;
+    const dens = (d < 400 ? 1 / 5 : d < 900 ? 1 / 14 : 1 / 45) * (opts.density ?? 1);
     const n = Math.floor(len * dens + rng());
     for (let k = 0; k < n; k++) walkers.push({ r, len, s: rng() * len, dir: rng() < 0.5 ? 1 : -1, speed: 1.0 + rng() * 0.6, off: (rng() - 0.5) * r.w * 0.7, ph: rng() * 6 });
   }
 
   // ---- people: Rocketbox avatars (near: skinned + animated, far: instanced baked poses)
   const people = [];
-  for (const st of statics) people.push({ x: st[0], y: st[1], h: st[2], s: 0.94 + rng() * 0.12, w: null });
+  for (const st of statics) if (rng() < (opts.density ?? 1)) people.push({ x: st[0], y: st[1], h: st[2], s: 0.94 + rng() * 0.12, w: null });
   for (const w of walkers) people.push({ x: 0, y: 0, h: 0, s: 0.94 + rng() * 0.12, w });
   const total = people.length;
   const col = new THREE.Color(), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), pos = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1);

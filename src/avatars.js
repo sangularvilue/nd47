@@ -15,9 +15,11 @@ export const CLIPS = {
   f: { walk: ['f_walk_neutral_01', 'f_walk_neutral_02'], idle: ['f_idle_neutral_01', 'f_idle_neutral_03'], social: ['f_gestic_talk_relaxed_01', 'f_drink_drinking', 'f_cheer_02', 'f_claphands_01', 'f_cell_phone_textmessage'], run: ['m_run_neutral_01'] },
 };
 
-export async function loadKit(onProgress) {
+export async function loadKit(onProgress, { lite = false } = {}) {
   const gl = new GLTFLoader(), tl = new THREE.TextureLoader();
-  const all = [...KIT.fans, ...KIT.staff, ...KIT.vip];
+  const fans = lite ? KIT.fans.filter((_, i) => i % 2 === 0) : KIT.fans; // phones: 6 fan looks instead of 12
+  const all = [...fans, ...KIT.staff, ...KIT.vip];
+  const sfx = lite ? '_512' : '';
   const clipNames = [...new Set(Object.values(CLIPS).flatMap((g) => Object.values(g).flat()))];
   let done = 0; const total = all.length + clipNames.length;
   const tick = () => onProgress?.(++done, total);
@@ -25,7 +27,7 @@ export async function loadKit(onProgress) {
   const avatars = {};
   await Promise.all(all.map(async ([name, sex]) => {
     try {
-      const [g, body, head, op] = await Promise.all([gl.loadAsync(`assets/people/${name}.glb`), tex(name, 'body.jpg'), tex(name, 'head.jpg'), tex(name, 'opacity.webp')]);
+      const [g, body, head, op] = await Promise.all([gl.loadAsync(`assets/people/${name}.glb`), tex(name, `body${sfx}.jpg`), tex(name, `head${sfx}.jpg`), tex(name, `opacity${sfx}.webp`)]);
       const mats = {
         body: new THREE.MeshStandardMaterial({ map: body, roughness: 0.78 }),
         head: new THREE.MeshStandardMaterial({ map: head, roughness: 0.6 }),

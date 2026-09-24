@@ -12,7 +12,7 @@ function avgColor(img) {
   return new THREE.Color().setRGB(r / n / 255, gg / n / 255, b / n / 255, THREE.SRGBColorSpace);
 }
 
-export async function loadScans(renderer, onProgress) {
+export async function loadScans(renderer, onProgress, dir = 'assets/tex/') {
   const loader = new THREE.TextureLoader();
   const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const get = (url, srgb) => new Promise((res) => loader.load(url, (t) => {
@@ -23,7 +23,7 @@ export async function loadScans(renderer, onProgress) {
   const out = {};
   let done = 0;
   await Promise.all(IDS.map(async (id) => {
-    const [map, normal, rough] = await Promise.all([get(`assets/tex/${id}_diff.jpg`, true), get(`assets/tex/${id}_nor.jpg`, false), get(`assets/tex/${id}_rough.jpg`, false)]);
+    const [map, normal, rough] = await Promise.all([get(`${dir}${id}_diff.jpg`, true), get(`${dir}${id}_nor.jpg`, false), get(`${dir}${id}_rough.jpg`, false)]);
     if (map) out[id] = { map, normal, rough, avg: avgColor(map.image) };
     onProgress?.(++done, IDS.length);
   }));

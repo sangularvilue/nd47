@@ -7,6 +7,28 @@ import { TER, baseOf, drapeTriangles } from './terrain.js';
 import { doorCut } from './library.js';
 import { GeoBuilder, W, area, centroid, capPoly, obb, inset, outset, norm, hash1, mulberry, pip } from './geo.js';
 
+// Split a non-indexed geometry into square tiles by triangle centroid, so off-screen tiles are culled.
+export function splitTiles(g, size) {
+  const P = g.attributes.position.array, n = P.length / 9, buckets = new Map();
+  for (let t = 0; t < n; t++) {
+    const cx = (P[t * 9] + P[t * 9 + 3] + P[t * 9 + 6]) / 3, cz = (P[t * 9 + 2] + P[t * 9 + 5] + P[t * 9 + 8]) / 3;
+    const k = Math.floor(cx / size) + ',' + Math.floor(cz / size);
+    (buckets.get(k) || buckets.set(k, []).get(k)).push(t);
+  }
+  if (buckets.size <= 1) return [g];
+  const out = [];
+  for (const tris of buckets.values()) {
+    const ng = new THREE.BufferGeometry();
+    for (const [name, a] of Object.entries(g.attributes)) {
+      const s = a.itemSize, src = a.array, dst = new src.constructor(tris.length * 3 * s);
+      tris.forEach((t, i) => dst.set(src.subarray(t * 3 * s, t * 3 * s + 3 * s), i * 3 * s));
+      ng.setAttribute(name, new THREE.BufferAttribute(dst, s));
+    }
+    ng.computeBoundingSphere(); out.push(ng);
+  }
+  g.dispose();
+  return out;
+}
 // facade kinds: 0 ND brick, 1 house, 2 commercial brick, 3 concrete, 4 metal, 5 library granite, 6 stadium
 const BAY = [[3.4, 3.9], [3.6, 3.0], [4.2, 4.0], [5.0, 3.2], [4.0, 4.0], [3.2, 3.2], [8, 9]];
 const HOUSE_COLS = [[0.95, 0.94, 0.9], [0.8, 0.82, 0.84], [0.62, 0.7, 0.8], [0.93, 0.87, 0.68], [0.7, 0.76, 0.66], [0.85, 0.8, 0.72], [0.55, 0.5, 0.48], [0.9, 0.9, 0.92]];
@@ -22,7 +44,7 @@ export function buildWorld(data, T, scene, env) {
   const tintOf = (id, hex) => (S && S[id] ? { color: new THREE.Color(hex), avgL: 0.2126 * S[id].avg.r + 0.7152 * S[id].avg.g + 0.0722 * S[id].avg.b } : null);
   const LAWN = '#5b7a33';
   const groundMat = addDetail(new THREE.MeshStandardMaterial(S ? S.set('leafy_grass', 24 / 5) : { map: T.ground.base, ...matOpts }), 5.1, 0.35, tintOf('leafy_grass', '#587631'));
-  const ground = new THREE.Mesh(TER.t.mesh(1), groundMat);
+  const ground = new THREE.Mesh(TER.t.mesh(T.lite ? 3 : 2), groundMat);
   ground.receiveShadow = true; scene.add(ground);
   // flat apron beyond the LiDAR extent, with a hole where the terrain mesh is
   const [bx0, by0, bx1, by1] = data.bounds;
@@ -34,7 +56,7 @@ export function buildWorld(data, T, scene, env) {
   apron.position.y = 1.0; apron.receiveShadow = true; scene.add(apron);
   // Drape a flat GeoBuilder onto the terrain (y values become offsets above grade)
   const draped = (gb, maxLen = 6) => {
-    const d = drapeTriangles(gb.pos, gb.uv, TER.t, maxLen);
+    const d = drapeTriangles(gb.pos, gb.uv, TER.t, maxLen * (T.lite ? 3 : 2));
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(d.pos, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(d.uv, 2));
@@ -42,6 +64,8 @@ export function buildWorld(data, T, scene, env) {
     return g;
   };
   out.draped = draped;
+  // wrap a draped geometry into culled tile meshes; returns a Group so callers can keep treating it as one object
+  const tileMeshes = (g, mat) => { const grp = new THREE.Group(); for (const t of splitTiles(g, 320)) { const m = new THREE.Mesh(t, mat); m.receiveShadow = true; grp.add(m); } return grp; };
 
   // ---------------- areas ----------------
   const AREA = {
@@ -69,7 +93,7 @@ export function buildWorld(data, T, scene, env) {
     const useScan = cfg.scan && S && S[cfg.scan];
     const mat = new THREE.MeshStandardMaterial(useScan ? S.set(cfg.scan, cfg.s / cfg.tile) : { map: cfg.tex || null, color: cfg.col || 0xffffff, ...matOpts });
     if (cfg.tex && t !== 'parking' && t !== 'pitch' && t !== 'turf') addDetail(mat, useScan ? 4.3 : 6.1, useScan ? 0.3 : 0.4, useScan && cfg.tint ? tintOf(cfg.scan, cfg.tint) : null);
-    const m = new THREE.Mesh(draped(gb), mat);
+    const m = tileMeshes(draped(gb), mat);
     m.receiveShadow = true; scene.add(m);
   }
 
@@ -104,7 +128,7 @@ export function buildWorld(data, T, scene, env) {
     g.computeVertexNormals();
     // Make all faces point +z
     const water = new Water(g, {
-      textureWidth: 1024, textureHeight: 1024, waterNormals: T.waterNormals,
+      textureWidth: T.lite ? 512 : 1024, textureHeight: T.lite ? 512 : 1024, waterNormals: T.waterNormals,
       sunDirection: env.sunDir.clone(), sunColor: 0xfff0d8, waterColor: 0x2c4a3c, distortionScale: 0.9, fog: true, alpha: 1.0,
     });
     water.material.side = THREE.DoubleSide;
@@ -129,7 +153,7 @@ export function buildWorld(data, T, scene, env) {
         shore.quad(W(r[i], 0.06), W(r[j], 0.06), W(o[j], 0.06), W(o[i], 0.06), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
       }
     }
-    const sm = new THREE.Mesh(draped(shore, 3), new THREE.MeshStandardMaterial({ color: 0x4d4a33, roughness: 1, side: THREE.DoubleSide }));
+    const sm = tileMeshes(draped(shore, 3), new THREE.MeshStandardMaterial({ color: 0x4d4a33, roughness: 1, side: THREE.DoubleSide }));
     sm.receiveShadow = true; scene.add(sm);
     out.waterPolys = waterPolys;
   }
@@ -181,14 +205,14 @@ export function buildWorld(data, T, scene, env) {
         }
       }
     }
-    const rm = new THREE.Mesh(draped(road, 4), addDetail(new THREE.MeshStandardMaterial(S ? S.set('asphalt_02', 10 / 6, { color: 0x9a9a9a }) : { map: T.asphalt, roughness: 0.95 }), 3.7, 0.3));
-    const pm = new THREE.Mesh(draped(path, 4), S ? addDetail(new THREE.MeshStandardMaterial(S.set('concrete_pavement', 8 / 2.6)), 3.1, 0.25, tintOf('concrete_pavement', '#bdb6a7')) : new THREE.MeshStandardMaterial({ map: T.concrete, roughness: 0.9 }));
-    const lm = new THREE.Mesh(draped(paint, 4), new THREE.MeshStandardMaterial({ color: 0xd8b23a, roughness: 0.7 }));
+    const rm = tileMeshes(draped(road, 4), addDetail(new THREE.MeshStandardMaterial(S ? S.set('asphalt_02', 10 / 6, { color: 0x9a9a9a }) : { map: T.asphalt, roughness: 0.95 }), 3.7, 0.3));
+    const pm = tileMeshes(draped(path, 4), S ? addDetail(new THREE.MeshStandardMaterial(S.set('concrete_pavement', 8 / 2.6)), 3.1, 0.25, tintOf('concrete_pavement', '#bdb6a7')) : new THREE.MeshStandardMaterial({ map: T.concrete, roughness: 0.9 }));
+    const lm = tileMeshes(draped(paint, 4), new THREE.MeshStandardMaterial({ color: 0xd8b23a, roughness: 0.7 }));
     for (const m of [rm, pm, lm]) { m.receiveShadow = true; scene.add(m); }
     // rail line
     const rail = new GeoBuilder();
     for (const p of data.rails) if (p.length > 1) ribbon(rail, p, 4, 0.05, 6);
-    const railm = new THREE.Mesh(draped(rail, 4), new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 1 }));
+    const railm = tileMeshes(draped(rail, 4), new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 1 }));
     railm.receiveShadow = true; scene.add(railm);
   }
 
@@ -366,7 +390,7 @@ export function buildWorld(data, T, scene, env) {
       }
     }
     flush();
-    const mk = (gb, mat) => { if (!gb.count) return; const m = new THREE.Mesh(gb.build(), mat); m.castShadow = true; m.receiveShadow = true; scene.add(m); return m; };
+    const mk = (gb, mat) => { if (!gb.count) return; for (const g of splitTiles(gb.build(), 320)) { const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; scene.add(m); } };
     const sc = (id, hex, tile) => (S && S[id] ? { scan: S[id], tint: hex ? new THREE.Color(hex) : S[id].avg.clone(), tile } : null);
     const FACADE_SCANS = { 0: { brick: sc('brick_wall_001', '#d8caa5', 1.6), lime: sc('large_sandstone_blocks', '#e3d9c3', 3.2) }, 2: { brick: sc('large_red_bricks', null, 1.8) }, 6: { brick: sc('large_red_bricks', '#b98365', 1.8) } };
     walls.forEach((gb, k) => mk(gb, facadePatch(new THREE.MeshStandardMaterial({ map: T.facade[k].map, roughnessMap: T.facade[k].mask, normalMap: T.facade[k].normal, vertexColors: true, roughness: 1, metalness: 0.0, envMapIntensity: 1.0 }), { bay: BAY[k][0], floor: BAY[k][1], stone: k === 0 ? 1 : 0, interior: k === 6 ? 0 : 1, key: k + (FACADE_SCANS[k] ? 's' : ''), ...(FACADE_SCANS[k] || {}) })));

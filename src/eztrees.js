@@ -16,6 +16,9 @@ const AUTUMN = [['#6a9a3a', 10], ['#557f2e', 8], ['#86a33c', 7], ['#a8a83a', 6],
 const AT = AUTUMN.reduce((s, a) => s + a[1], 0);
 const pickCol = (r) => { let x = r * AT; for (const [c, w] of AUTUMN) if ((x -= w) <= 0) return c; return AUTUMN[0][0]; };
 const FRAMES = 8;
+let LITE = false;
+// shrink a texture's image to ≤ px (phones): the EZ-Tree bark/leaf sets ship at 1–2k
+function shrink(t, px) { if (!t || !t.image || !LITE) return t; const im = t.image, s = Math.min(1, px / Math.max(im.width, im.height)); if (s >= 1) return t; const c = document.createElement('canvas'); c.width = Math.round(im.width * s); c.height = Math.round(im.height * s); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); const n = t.clone(); n.image = c; n.source = new THREE.Source(c); n.needsUpdate = true; return n; }
 
 // Greyscale leaves ×(instance colour); spherical canopy normals are baked into the geometry.
 function leafMaterial(map, alphaTest) {
@@ -41,8 +44,8 @@ function buildVariant(v, i) {
   { leaves.computeBoundingBox(); const c = leaves.boundingBox.getCenter(new THREE.Vector3()); const p = leaves.attributes.position, n = leaves.attributes.normal, q = new THREE.Vector3();
     for (let j = 0; j < p.count; j++) { q.set(p.getX(j) - c.x, (p.getY(j) - c.y) * 1.2, p.getZ(j) - c.z).normalize(); n.setXYZ(j, q.x, q.y, q.z); } n.needsUpdate = true; }
   const bm = t.branchesMesh.material, lm = t.leavesMesh.material;
-  const bark = new THREE.MeshStandardMaterial({ map: bm.map, normalMap: bm.normalMap, roughnessMap: bm.roughnessMap, roughness: 1, color: bm.color ? bm.color.clone() : 0xffffff });
-  const leaf = leafMaterial(lm.map, lm.alphaTest || 0.5);
+  const bark = new THREE.MeshStandardMaterial({ map: shrink(bm.map, 256), normalMap: LITE ? null : bm.normalMap, roughnessMap: LITE ? null : bm.roughnessMap, roughness: 1, color: bm.color ? bm.color.clone() : 0xffffff });
+  const leaf = leafMaterial(shrink(lm.map, 512), lm.alphaTest || 0.5);
   return { ...v, i, branches, leaves, bark, leaf, w: Math.max(size.x, size.z) * k, hgt: v.h, tris: (branches.index.count + leaves.index.count) / 3 };
 }
 
@@ -59,7 +62,7 @@ function bakeImposter(renderer, V, res) {
   const b = new THREE.Mesh(V.branches, unlitBark), l = new THREE.Mesh(V.leaves, unlitLeaf);
   scene.add(b, l);
   const W = res * FRAMES, H = Math.round(res * (V.hgt / V.w) * 1.0) || res;
-  const mk = () => { const rt = new THREE.WebGLRenderTarget(W, H, { samples: 4 }); rt.texture.colorSpace = THREE.SRGBColorSpace; return rt; };
+  const mk = () => { const rt = new THREE.WebGLRenderTarget(W, H, { samples: 0 }); /* MSAA targets would keep a second multisample buffer alive */ rt.texture.colorSpace = THREE.SRGBColorSpace; return rt; };
   const albedo = mk(), mask = mk();
   const half = V.w * 0.52;
   const cam = new THREE.OrthographicCamera(-half, half, V.hgt * 1.02, 0, 0.1, 400);
@@ -128,7 +131,8 @@ function imposterMaterial(atlas, size) {
   return { m, d };
 }
 
-export async function buildEzTrees(list, scene, renderer, { nearR = 140, nearMax = 600, res = 256 } = {}) {
+export async function buildEzTrees(list, scene, renderer, { nearR = 140, nearMax = 600, res = 256, lite = false } = {}) {
+  LITE = lite;
   const V = [];
   for (let i = 0; i < VARIANTS.length; i++) { V.push(buildVariant(VARIANTS[i], i)); await new Promise((r) => setTimeout(r, 0)); }
   const quad = new THREE.PlaneGeometry(1, 1); quad.translate(0, 0.5, 0);

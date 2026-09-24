@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { pip, mulberry } from './geo.js';
 import { baseOf } from './terrain.js';
+import { Collider } from './player.js';
 
 export const LIB_BASE = 16109833, LIB_TOWER = 1185999646;
 const FLOOR_NAMES = { '-1': 'LOWER LEVEL', 1: '1ST FLOOR', 2: '2ND FLOOR', 3: '3RD FLOOR' };
@@ -192,12 +193,14 @@ export function buildLibrary(data, lib, scene, T) {
     return out;
   };
 
+  // Floor metadata is cheap and always present; geometry is built on demand and freed when you leave.
   const levels = {};
-  const allLights = [];
-  for (let k = 0; k < floors.length; k++) {
+  for (let k = 0; k < floors.length; k++) { const f = floors[k], next = floors[k + 1]; levels[f.level] = { lv: f.level, k, y: Y0 + f.elev, room: Math.min(f.ceil, (next ? next.elev - f.elev : 4.4) - 0.35), built: false }; }
+  const buildFloor = (lvWanted) => {
+    const LV = levels[lvWanted]; if (!LV || LV.built) return LV;
+    const k = LV.k;
     const f = floors[k], lv = f.level, st = styleOf(lv), th = f.th, fp = fpOf(lv);
-    const next = floors[k + 1], y0 = Y0 + f.elev;
-    const room = Math.min(f.ceil, (next ? next.elev - f.elev : 4.4) - 0.35);
+    const y0 = LV.y, room = LV.room;
     const keep = (r) => inside(fp, r[0], r[1]);
     const R = Object.fromEntries(Object.entries(f.regions).map(([n, v]) => [n, v.filter(keep)]));
     let walls = f.walls.filter(keep);
@@ -289,9 +292,17 @@ export function buildLibrary(data, lib, scene, T) {
     scene.add(grp);
     // collision: plan walls, cores, shelving, tables + the footprint shell (door gap on floor 1)
     const shell = ringSegs(fp, lv === 1 ? door : null);
-    levels[lv] = { lv, y: y0, room, grp, segs: [...segs, ...shell], cores: R.core, corridors: R.corridor, lights: lights.map((p) => [p[0], y0 + room - 0.3, p[1]]), fp };
-    allLights.push(...levels[lv].lights);
-  }
+    Object.assign(LV, { grp, segs: [...segs, ...shell], cores: R.core, corridors: R.corridor, lights: lights.map((p) => [p[0], y0 + room - 0.3, p[1]]), fp, built: true });
+    LV.collider = new Collider([{ segs: LV.segs }], 12);
+    return LV;
+  };
+  const freeFloor = (lv) => {
+    const L = levels[lv]; if (!L || !L.built) return;
+    L.grp.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    scene.remove(L.grp);
+    for (const k of ['grp', 'segs', 'cores', 'corridors', 'lights', 'fp', 'collider']) L[k] = null;
+    L.built = false;
+  };
 
   // ---- automatic sliding doors (bronze-anodised frame, two glass leaves) ----
   const doorGrp = new THREE.Group();
@@ -329,16 +340,17 @@ export function buildLibrary(data, lib, scene, T) {
     door, levels, floors: floors.map((f) => f.level), Y0,
     contains: (x, y) => pip([x, y], BASE.o),
     outdoorSegs: outdoorShell,
+    ensure: (lv) => buildFloor(lv),
     floorY: (lv) => levels[lv]?.y ?? Y0,
     ceilY: (lv) => (levels[lv] ? levels[lv].y + levels[lv].room : Y0 + 4),
     nearCore(x, y, lv, r = 2.2) {
-      const L = levels[lv]; if (!L) return false;
+      const L = buildFloor(lv); if (!L) return false;
       for (const c of L.cores) if (Math.hypot(c[0] - x, c[1] - y) < Math.hypot(c[2], c[3]) / 2 + r && c[2] * c[3] > 3) return true;
       return false;
     },
     // nearest open corridor point on a floor to (x, y)
     arrive(lv, x, y) {
-      const L = levels[lv]; let best = null, bd = 1e9;
+      const L = buildFloor(lv); let best = null, bd = 1e9;
       for (const r of L.corridors) { if (r[2] * r[3] < 3) continue; const d = (r[0] - x) ** 2 + (r[1] - y) ** 2; if (d < bd) { bd = d; best = r; } }
       return best ? [best[0], best[1]] : [x, y];
     },
@@ -350,12 +362,16 @@ export function buildLibrary(data, lib, scene, T) {
       for (const l of leaves) { const s = l.base + l.s * l.slide * openAmt; l.leaf.position.set(door.mid[0] + door.dir[0] * s + door.out[0] * 0.02, l.leaf.position.y, -(door.mid[1] + door.dir[1] * s + door.out[1] * 0.02)); }
       // which floor is drawn: the one you're on; the lobby too when you're near the entrance outside
       const near = Math.hypot(player.x - BASE.c[0], player.y - BASE.c[1]) < 140;
-      for (const lv in levels) levels[lv].grp.visible = player.level != null ? +lv === player.level : near && +lv === 1;
+      const keep = new Set();
+      if (player.level != null) keep.add(player.level);
+      if (near || player.level === 1) keep.add(1);
+      for (const lv in levels) { if (keep.has(+lv)) buildFloor(+lv); else if (levels[lv].built) freeFloor(+lv); }
+      for (const lv in levels) if (levels[lv].built) levels[lv].grp.visible = player.level != null ? +lv === player.level : +lv === 1;
       // fill lights
       plT += dt;
       if (plT > 0.25) {
         plT = 0;
-        const L = levels[player.level ?? 1];
+        const L = levels[player.level ?? 1]; if (!L || !L.built) return;
         const on = player.level != null || d < 25;
         const sorted = L ? L.lights.slice().sort((a, b) => ((a[0] - player.x) ** 2 + (a[2] - player.y) ** 2) - ((b[0] - player.x) ** 2 + (b[2] - player.y) ** 2)) : [];
         pls.forEach((l, i) => { const p = sorted[i]; if (!p || !on) { l.intensity = 0; return; } l.position.set(p[0], p[1], -p[2]); l.intensity = (player.level === 1 || player.level === 2 || player.level == null) ? 9 : 6; l.color.set(player.level >= 3 ? 0xeef2ff : 0xfff6ea); });
