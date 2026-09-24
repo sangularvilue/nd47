@@ -20,7 +20,7 @@ export class AtmosphereEffect extends Effect {
         float h0 = uCamPos.y - uGround, dy = dir.y * dist;
         float e0 = exp(-h0 / uFalloff);
         float od = abs(dy) > 0.01 ? uDensity * uFalloff * e0 * (1.0 - exp(-dy / uFalloff)) / dir.y : uDensity * e0 * dist;
-        od += dist * 0.00021; // aerosol: ~35% at 2 km, the campus edge fades into haze
+        od += dist * 0.00021 * step(1e-6, uDensity); // aerosol: ~35% at 2 km, the campus edge fades into haze
         float fog = 1.0 - exp(-max(od, 0.0));
         float mu = max(dot(dir, uSun), 0.0);
         vec3 col = mix(uHaze, uSunCol, pow(mu, 6.0) * 0.85 + pow(mu, 48.0) * 0.6);

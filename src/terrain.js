@@ -48,6 +48,16 @@ export class Terrain {
       }
     }
   }
+  // Keep the terrain just below y inside a polygon (so interior floors never z-fight with grade)
+  flatten(poly, y) {
+    let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
+    for (const [x, yy] of poly) { mnx = Math.min(mnx, x); mny = Math.min(mny, yy); mxx = Math.max(mxx, x); mxy = Math.max(mxy, yy); }
+    for (let r = Math.max(0, Math.floor((mny - this.y0) / this.cs)); r <= Math.min(this.H - 1, Math.ceil((mxy - this.y0) / this.cs)); r++)
+      for (let c = Math.max(0, Math.floor((mnx - this.x0) / this.cs)); c <= Math.min(this.W - 1, Math.ceil((mxx - this.x0) / this.cs)); c++) {
+        const x = this.x0 + (c + 0.5) * this.cs, yy = this.y0 + (r + 0.5) * this.cs;
+        if (inPoly([x, yy], poly, [])) this.d[r * this.W + c] = Math.min(this.d[r * this.W + c], y);
+      }
+  }
   // Flatten a pad under each building so walls sit on level grade.
   padBuildings(buildings) {
     for (const b of buildings) {

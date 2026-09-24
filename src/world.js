@@ -4,6 +4,7 @@ import { Water } from 'three/addons/objects/Water.js';
 import { addDetail, facadePatch, MIRROR_CLIP } from './materials.js';
 import { buildTrees } from './foliage.js';
 import { TER, baseOf, drapeTriangles } from './terrain.js';
+import { doorCut } from './library.js';
 import { GeoBuilder, W, area, centroid, capPoly, obb, inset, outset, norm, hash1, mulberry, pip } from './geo.js';
 
 // facade kinds: 0 ND brick, 1 house, 2 commercial brick, 3 concrete, 4 metal, 5 library granite, 6 stadium
@@ -252,11 +253,17 @@ export function buildWorld(data, T, scene, env) {
           const L = Math.hypot(c[0] - a[0], c[1] - a[1]);
           const bays = Math.max(1, Math.round(L / bw));
           const v0 = mh / fh, v1 = h / fh;
-          gbw.quad(W(a, mh), W(c, mh), W(c, h), W(a, h), [u, v0], [u + bays, v0], [u + bays, v1], [u, v1], tint);
+          const cut = data.libDoor && (b.id === 16109833 || b.id === 1185999646) ? doorCut(data.libDoor, a, c) : null;
+          if (!cut) gbw.quad(W(a, mh), W(c, mh), W(c, h), W(a, h), [u, v0], [u + bays, v0], [u + bays, v1], [u, v1], tint);
+          else {
+            const [s0, s1] = cut, at = (s) => [a[0] + (c[0] - a[0]) * s / L, a[1] + (c[1] - a[1]) * s / L], uu = (s) => u + bays * s / L, oh = data.libDoor.height + 0.45;
+            const piece = (sa, sb, y0, y1) => { if (sb - sa < 0.01 || y1 <= y0) return; gbw.quad(W(at(sa), y0), W(at(sb), y0), W(at(sb), y1), W(at(sa), y1), [uu(sa), y0 / fh], [uu(sb), y0 / fh], [uu(sb), y1 / fh], [uu(sa), y1 / fh], tint); };
+            piece(0, s0, mh, h); piece(s1, L, mh, h); piece(s0, s1, oh, h);
+          }
           u += bays;
         }
       }
-      if (b.bt !== 'roof') out.colliders.push({ o: b.o, hl: b.hl, n: b.n });
+      if (b.bt !== 'roof') out.colliders.push({ o: b.o, hl: b.hl, n: b.n, id: b.id });
       if (b.n) out.named.push({ n: b.n, c: b.c, a: b.a });
 
       // --- roof

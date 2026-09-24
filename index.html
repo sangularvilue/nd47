@@ -65,6 +65,17 @@
   #letterbox i:first-child { top: 0; } #letterbox i:last-child { bottom: 0; }
   body.cine #letterbox i { height: max(0px, calc((100vh - 100vw / 2.39) / 2)); }
   #fader { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 3; }
+  .spawnlbl { margin-top: 18px; font-family: 'Barlow Condensed'; letter-spacing: 0.24em; font-size: 12px; color: var(--dim); text-transform: uppercase; }
+  #spawns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-width: 620px; }
+  #spawns button { font-size: 13px; padding: 7px 11px; letter-spacing: 0.08em; background: rgba(8,9,11,0.45); border-color: rgba(255,255,255,0.3); }
+  #spawns button:hover, #spawns button:focus-visible { border-color: var(--gold); outline: none; }
+  #prompt { position: fixed; left: 50%; bottom: calc(110px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 7; font-size: 15px; padding: 10px 18px; background: rgba(8,9,11,0.6); }
+  #elev { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); padding: 0 16px; }
+  #elev .ep { background: #17181b; border: 1px solid #3a3b3f; padding: 20px 22px; width: min(300px, 100%); }
+  #elevList { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
+  #elevList button { padding: 14px 0; font-size: 18px; border-radius: 50%; aspect-ratio: 1; border-color: #8a8a86; background: radial-gradient(#2c2d31, #1b1c1f); }
+  #elevList button.here { border-color: #ffb347; color: #ffb347; box-shadow: 0 0 10px rgba(255,179,71,0.5) inset; }
+  #elevClose { width: 100%; }
   #touch { display: none; }
   body.touch.playing #touch { display: block; position: fixed; inset: 0; pointer-events: none; z-index: 6; }
   #touch .stick { position: absolute; width: 112px; height: 112px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.18); opacity: 0; transition: opacity .15s; }
@@ -116,6 +127,8 @@
     then a private box above the fifty-yard line. Blend in. Go Irish.
   </div>
   <div class="btns"><button class="primary" id="start">Start on foot</button><button id="startDrone">Fly the campus</button><button id="openRef">Google 3D reference</button></div>
+  <div class="spawnlbl">Or start at</div>
+  <div id="spawns"></div>
   <div class="keys">
     <kbd>WASD</kbd> move · <kbd>Shift</kbd> run · mouse look (click to lock) · <kbd>F</kbd> drone camera · <kbd>M</kbd> map · <kbd>Tab</kbd> objectives · <kbd>1</kbd>–<kbd>7</kbd> landmark views · <kbd>O</kbd> graphics quality · <kbd>G</kbd> Google reference
   </div>
@@ -147,6 +160,8 @@
     <p class="note"><kbd>G</kbd> cycles: off → Google only → both overlaid. Works when the game is hosted on its own site or run locally; the claude.ai viewer blocks outside tile requests.</p>
   </div>
 </div>
+<button id="prompt" class="hidden"><kbd>E</kbd> Elevator</button>
+<div id="elev" class="hidden" role="dialog" aria-label="Elevator"><div class="ep"><div class="mt">HESBURGH LIBRARY</div><div class="ms">Select a floor</div><div id="elevList"></div><button id="elevClose">Close</button></div></div>
 <div id="bigmapWrap" class="hidden"><canvas id="bigmap"></canvas><div class="cap">CAMPUS MAP · M TO CLOSE</div></div>
 <div class="credit">Map data © OpenStreetMap contributors · fan project, not affiliated with the University</div>
 

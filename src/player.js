@@ -51,24 +51,29 @@ export function animateAgent(agent, speed, dt) {
 
 // Spatial hash of polygon edges for circle-vs-wall collision.
 export class Collider {
+  // polys: {o: ring, hl?: rings} closed polygons, or {segs: [[a, b], ...]} open wall segments
   constructor(polys, cell = 25) {
     this.cell = cell; this.grid = new Map(); this.polys = polys;
-    for (const p of polys) for (const ring of [p.o, ...(p.hl || [])]) {
-      for (let i = 0; i < ring.length; i++) {
-        const a = ring[i], b = ring[(i + 1) % ring.length];
-        const x0 = Math.floor(Math.min(a[0], b[0]) / cell), x1 = Math.floor(Math.max(a[0], b[0]) / cell);
-        const y0 = Math.floor(Math.min(a[1], b[1]) / cell), y1 = Math.floor(Math.max(a[1], b[1]) / cell);
-        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const k = x + ',' + y; if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push([a, b]); }
-      }
+    const add = (a, b) => {
+      const x0 = Math.floor(Math.min(a[0], b[0]) / cell), x1 = Math.floor(Math.max(a[0], b[0]) / cell);
+      const y0 = Math.floor(Math.min(a[1], b[1]) / cell), y1 = Math.floor(Math.max(a[1], b[1]) / cell);
+      for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const k = x + ',' + y; if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push([a, b]); }
+    };
+    for (const p of polys) {
+      if (p.segs) { for (const [a, b] of p.segs) add(a, b); continue; }
+      for (const ring of [p.o, ...(p.hl || [])]) for (let i = 0; i < ring.length; i++) add(ring[i], ring[(i + 1) % ring.length]);
     }
+  }
+  edgesNear(x, y, r) {
+    const out = new Set(), c = this.cell;
+    for (let gx = Math.floor((x - r) / c); gx <= Math.floor((x + r) / c); gx++) for (let gy = Math.floor((y - r) / c); gy <= Math.floor((y + r) / c); gy++) { const e = this.grid.get(gx + ',' + gy); if (e) for (const s of e) out.add(s); }
+    return out;
   }
   // push point (x,y) out of all edges within radius r
   resolve(x, y, r) {
-    for (let iter = 0; iter < 3; iter++) {
-      const k = Math.floor(x / this.cell) + ',' + Math.floor(y / this.cell);
-      const edges = this.grid.get(k); if (!edges) return [x, y];
+    for (let iter = 0; iter < 4; iter++) {
       let moved = false;
-      for (const [a, b] of edges) {
+      for (const [a, b] of this.edgesNear(x, y, r)) {
         const ex = b[0] - a[0], ey = b[1] - a[1], L2 = ex * ex + ey * ey; if (L2 < 1e-6) continue;
         const t = Math.max(0, Math.min(1, ((x - a[0]) * ex + (y - a[1]) * ey) / L2));
         const px = a[0] + ex * t, py = a[1] + ey * t, dx = x - px, dy = y - py, d = Math.hypot(dx, dy);
@@ -77,6 +82,18 @@ export class Collider {
       if (!moved) break;
     }
     return [x, y];
+  }
+  // fraction (0..1) along p0→p1 of the first wall hit, 1 if clear
+  raycast(x0, y0, x1, y1) {
+    let best = 1;
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2, r = Math.hypot(x1 - x0, y1 - y0) / 2 + 1;
+    for (const [a, b] of this.edgesNear(mx, my, r)) {
+      const dx = x1 - x0, dy = y1 - y0, ex = b[0] - a[0], ey = b[1] - a[1];
+      const den = dx * ey - dy * ex; if (Math.abs(den) < 1e-9) continue;
+      const t = ((a[0] - x0) * ey - (a[1] - y0) * ex) / den, u = ((a[0] - x0) * dy - (a[1] - y0) * dx) / den;
+      if (t >= 0 && t < best && u >= 0 && u <= 1) best = t;
+    }
+    return best;
   }
 }
 

@@ -108,6 +108,7 @@ export function buildLandmarks(data, T, scene, world) {
         const score = -n[1] * len;
         if (!best || score > best.score) best = { a, c, len, n, score };
       }
+      if (data.libDoor) { const d = data.libDoor; best = { a: d.a, c: d.c, len: d.faceLen, n: d.out }; }
       const mw = Math.min(best.len * 0.72, 21), mh = 41;
       const mid = [(best.a[0] + best.c[0]) / 2 + best.n[0] * 0.15, (best.a[1] + best.c[1]) / 2 + best.n[1] * 0.15];
       const m = new THREE.Mesh(new THREE.PlaneGeometry(mw, mh), new THREE.MeshStandardMaterial({ map: T.mural, roughness: 0.7 }));

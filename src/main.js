@@ -12,6 +12,7 @@ import { loadScans } from './scans.js';
 import { buildFallingLeaves, buildUndergrowth } from './ambient.js';
 import { loadKit, cloneAvatar } from './avatars.js';
 import { buildEzTrees } from './eztrees.js';
+import { buildLibrary, libraryDoor, floorName, LIB_BASE, LIB_TOWER } from './library.js';
 import { makeTextures } from './textures.js';
 import { buildWorld } from './world.js';
 import { buildLandmarks } from './landmarks.js';
@@ -52,7 +53,7 @@ const csm = new CSM({
 });
 csm.fade = true;
 for (const l of csm.lights) { l.color.set(0xffc58f); l.shadow.normalBias = 0.35; }
-scene.add(new THREE.HemisphereLight(0x9db6d8, 0x5e4a30, 0.62));
+const hemi = new THREE.HemisphereLight(0x9db6d8, 0x5e4a30, 0.62); scene.add(hemi);
 let post;
 
 // --- state
@@ -60,9 +61,36 @@ const keys = new Set();
 let mode = 'title'; // title | play | drone | map
 let yaw = 0, pitch = 0.18, camDist = 4.6;
 let agent = makeAgent();
-const player = { x: 25, y: -250, h: Math.PI, speed: 0 };
+const player = { x: 25, y: -250, h: Math.PI, speed: 0, level: null };
 const drone = new THREE.Vector3(), droneRot = { yaw: 0, pitch: -0.3 };
-let world, L, people, hud, collider, grass, leaves, ezTrees, worldObjs = [];
+let world, L, people, hud, collider, grass, leaves, ezTrees, lib, worldObjs = [], footPts = [];
+// Start points: [label, [x, y] near, [x, y] to face]. Each snaps to the nearest walkway.
+const SPAWNS = () => [
+  ['Main Quad · Golden Dome', [25, -300], [L.dome.x, L.dome.y]],
+  ['God Quad · Sacred Heart', [25, -170], [L.dome.x, L.dome.y]],
+  ['Basilica & Grotto', [L.grotto.x - 14, L.grotto.y + 12], [L.grotto.x, L.grotto.y]],
+  ["St. Mary's Lake", [-420, 60], [L.dome.x, L.dome.y]],
+  ['Touchdown Jesus', [L.mural.x - 4, L.mural.y - 110], [L.mural.x, L.mural.y]],
+  ['Hesburgh Library doors', [L.mural.x, L.mural.y - 14], [L.mural.x, L.mural.y]],
+  ['Library Quad · DOE site', [L.doe.x - 10, L.doe.y - 45], [L.doe.x, L.doe.y]],
+  ['Nieuwland (physics)', [L.nieuwland.x, L.nieuwland.y - 55], [L.nieuwland.x, L.nieuwland.y]],
+  ['Stadium · Rockne Gate', [436, -350], [L.stadium.x, L.stadium.y]],
+  ['Tailgate lots', [560, -760], [L.stadium.x, L.stadium.y]],
+  ['South Quad', [-200, -320], [-384, -332]],
+  ['North Quad', [205, 60], [L.dome.x, L.dome.y]],
+  ['Eddy Street', [210, -1180], [L.stadium.x, L.stadium.y]],
+];
+function spawnAt(i) {
+  player.level = null;
+  const [, near, face] = SPAWNS()[i];
+  let best = near, bd = 1e9;
+  for (const p of footPts) { const d = (p[0] - near[0]) ** 2 + (p[1] - near[1]) ** 2; if (d < bd) { bd = d; best = p; } }
+  [player.x, player.y] = collider.resolve(best[0], best[1], 0.5);
+  const fx = face[0] - player.x, fy = face[1] - player.y, l = Math.hypot(fx, fy) || 1;
+  yaw = Math.atan2(-fx / l, fy / l); pitch = 0.12;
+  player.h = Math.atan2(fx, -fy); player.speed = 0;
+  flash(SPAWNS()[i][0]);
+}
 // Google Photorealistic 3D Tiles reference (G cycles off → Google only → both; key entered in the Reference panel)
 const gref = new GoogleReference(scene, camera, renderer);
 const REF_MODES = ['off', 'google', 'both'];
@@ -100,6 +128,8 @@ async function init() {
   const bin = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
   TER.t = new Terrain(bin.buffer, data.bounds);
   TER.t.carveWater(data.areas.filter((a) => a.t === 'water' || a.t === 'fountain'));
+  data.libDoor = libraryDoor(data);
+  { const lb = data.buildings.find((b) => b.id === LIB_BASE); if (lb && lb.g != null) TER.t.flatten(lb.o, lb.g - 223.0 - 0.35); }
   { const tt = TER.t.texture(); G.terr.value = tt.tex; G.terrB.value.copy(tt.bounds); }
   status('Raising 1,500 buildings…'); await tick();
   T.skipTrees = true;
@@ -121,7 +151,13 @@ async function init() {
   grass = quality === 'low' ? null : buildGrass(data, scene);
   buildUndergrowth(data, scene, T);
   leaves = buildFallingLeaves(scene, T, quality === 'low' ? 300 : 900);
-  collider = new Collider([...world.colliders, ...world.waterPolys.map((w) => ({ o: w.o, hl: [] }))]);
+  status('Opening Hesburgh Library…'); await tick();
+  const libData = await (await fetch('data/library.json')).json().catch(() => null);
+  lib = libData ? buildLibrary(data, libData, scene, T) : null;
+  const outdoor = world.colliders.filter((c) => !lib || (c.id !== LIB_BASE && c.id !== LIB_TOWER));
+  if (lib) outdoor.push({ segs: lib.outdoorSegs });
+  collider = new Collider([...outdoor, ...world.waterPolys.map((w) => ({ o: w.o, hl: [] }))]);
+  if (lib) for (const lv of lib.floors) lib.levels[lv].collider = new Collider([{ segs: lib.levels[lv].segs }], 12);
   hud = buildHud(data, L);
   worldObjs = scene.children.filter((c) => !before.has(c));
   scene.add(agent);
@@ -131,10 +167,17 @@ async function init() {
   renderer.compile(scene, camera);
   // spawn on the main quad south of the Dome, facing it
   player.x = 25; player.y = -300; player.h = Math.PI; yaw = 0; // back to the camera, facing the Dome
+  footPts = [];
+  for (const r of data.roads) if (r.f && r.w >= 2) for (let i = 0; i + 1 < r.p.length; i++) {
+    const [ax, ay] = r.p[i], [bx, by] = r.p[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 3));
+    for (let k = 0; k <= n; k++) footPts.push([ax + (bx - ax) * k / n, ay + (by - ay) * k / n]);
+  }
+  $('spawns').innerHTML = SPAWNS().map((s, i) => `<button class="spawn" data-i="${i}">${s[0]}</button>`).join('');
+  for (const b of $('spawns').querySelectorAll('button')) b.addEventListener('click', () => { spawnAt(+b.dataset.i); setMode('play'); try { renderer.domElement.requestPointerLock?.()?.catch?.(() => {}); } catch (e) {} });
   $('loading').classList.add('hidden');
   $('title').classList.remove('hidden');
   document.body.classList.add('cine');
-  window.__nd = { setTitleT: (t) => { titleT = t; }, scene, camera, renderer, world, L, people, player, setMode, drone, droneRot, setView, csm, get post() { return post; }, setQuality };
+  window.__nd = { get collider() { return collider; }, setTitleT: (t) => { titleT = t; }, setLevel, get lib() { return lib; }, scene, camera, renderer, world, L, people, player, setMode, drone, droneRot, setView, csm, get post() { return post; }, setQuality };
   requestAnimationFrame(loop);
 }
 
@@ -148,6 +191,7 @@ addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'INPUT') return;
   if (e.code === 'KeyG' && mode !== 'title') setRefMode(REF_MODES[(REF_MODES.indexOf(gref.mode) + 1) % REF_MODES.length]);
   if (e.code === 'KeyK') openRefPanel();
+  if (e.code === 'KeyE' && !$('prompt').classList.contains('hidden')) openElevator();
   if (e.code === 'KeyO') setQuality(QUALITIES[(QUALITIES.indexOf(quality) + 1) % QUALITIES.length]);
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -231,7 +275,7 @@ const SHOTS = () => [
 const tmpV = new THREE.Vector3();
 function loop() {
   requestAnimationFrame(loop);
-  const dt = Math.min(0.05, clock.getDelta());
+  const dt = Math.min(0.1, clock.getDelta());
   if (mode === 'title') {
     titleT += dt;
     const shots = SHOTS(), DUR = 9, i = Math.floor(titleT / DUR) % shots.length, k = (titleT % DUR) / DUR;
@@ -247,12 +291,18 @@ function loop() {
   } else if (mode === 'play' || mode === 'map') {
     if (mode === 'play') movePlayer(dt);
     // third-person camera over the right shoulder
-    const gy = TER.h(player.x, player.y);
+    const gy = groundY();
     const tgt = new THREE.Vector3(player.x, gy + 1.62, -player.y);
     const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
     const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-    const want = tgt.clone().addScaledVector(dir, camDist).addScaledVector(right, 0.55);
-    want.y = Math.max(TER.h(want.x, -want.z) + 0.5, want.y);
+    let want = tgt.clone().addScaledVector(dir, camDist).addScaledVector(right, 0.55);
+    if (player.level != null && lib) {
+      // indoors: pull the camera in front of walls and under the ceiling
+      const hit = activeCollider().raycast(player.x, player.y, want.x, -want.z);
+      if (hit < 1) want = tgt.clone().lerp(want, Math.max(0.12, hit - 0.08));
+      want.y = Math.min(want.y, lib.ceilY(player.level) - 0.25);
+      want.y = Math.max(want.y, gy + 0.4);
+    } else want.y = Math.max(TER.h(want.x, -want.z) + 0.5, want.y);
     camSmooth.lerp(want, 1 - Math.exp(-dt * 10)); // damped follow
     camera.position.copy(camSmooth);
     camera.lookAt(tgt.x + right.x * 0.55, tgt.y, tgt.z + right.z * 0.55);
@@ -269,14 +319,18 @@ function loop() {
     drone.y = Math.max(TER.h(drone.x, -drone.z) + 1.5, drone.y);
     camera.position.copy(drone); camera.lookAt(tmpV.copy(drone).add(f));
   }
-  agent.position.set(player.x, TER.h(player.x, player.y), -player.y); agent.rotation.y = player.h;
+  agent.position.set(player.x, groundY(), -player.y); agent.rotation.y = player.h;
+  if (lib) lib.update(dt, player, camera.position);
+  if (post?.atmo) { const inside = player.level != null && mode !== 'drone';
+    hemi.color.set(inside ? 0xfff4e6 : 0x9db6d8); hemi.groundColor.set(inside ? 0xd8cdbb : 0x5e4a30); hemi.intensity = inside ? 1.1 : 0.62; scene.environmentIntensity = inside ? 0.25 : 0.75;
+    post.grade.uniforms.get('exposure').value = inside ? (player.level <= 2 ? 0.66 : 0.52) : 0.46; post.atmo.uniforms.get('uDensity').value = inside ? 0 : 0.0014; post.atmo.uniforms.get('uDebug').value = 0; if (post.rays) post.rays.blendMode.opacity.value = inside ? 0 : 1; }
   if (agent.userData.mixer) animateRocketAgent(agent, player.speed, dt); else animateAgent(agent, player.speed, dt);
   people.update(dt, camera.position);
   if (world.water) world.water.material.uniforms.time.value += dt * 0.5;
   G.time.value += dt;
   camera.updateMatrixWorld();
   csm.update();
-  if (leaves) leaves.update(camera.position);
+  if (leaves) { leaves.update(camera.position); if (player.level != null && mode !== 'drone') leaves.mesh.visible = false; }
   if (ezTrees) ezTrees.update(dt, camera.position);
   if (grass) { grass.update(camera.position); if (gref.mode === 'google') grass.mesh.visible = false; }
   skyObj.update(dt, camera.position);
@@ -291,6 +345,23 @@ function loop() {
   }
   frames++; fpsT += dt; if (fpsT > 1) { $('fps').textContent = `${frames} fps · ${quality}`; frames = 0; fpsT = 0; }
 }
+const groundY = () => (player.level != null && lib ? lib.floorY(player.level) : TER.h(player.x, player.y));
+const activeCollider = () => (player.level != null && lib ? lib.levels[player.level].collider : collider);
+function setLevel(lv, x, y) {
+  player.level = lv;
+  if (lv != null && x != null) { const p = lib.arrive(lv, x, y); [player.x, player.y] = p; }
+  camSmooth.set(player.x, groundY() + 1.8, -player.y);
+  if (lv != null) flash('HESBURGH LIBRARY · ' + floorName(lv));
+}
+function openElevator() {
+  if (!lib || player.level == null) return;
+  document.exitPointerLock?.();
+  $('elevList').innerHTML = lib.floors.slice().reverse().map((lv) => `<button data-lv="${lv}" class="${lv === player.level ? 'here' : ''}">${lv === -1 ? 'LL' : lv}</button>`).join('');
+  for (const b of $('elevList').querySelectorAll('button')) b.addEventListener('click', () => { const lv = +b.dataset.lv; $('elev').classList.add('hidden'); if (lv !== player.level) setLevel(lv, player.x, player.y); });
+  $('elev').classList.remove('hidden');
+}
+$('elevClose').addEventListener('click', () => $('elev').classList.add('hidden'));
+$('prompt').addEventListener('click', openElevator);
 function movePlayer(dt) {
   let ix = 0, iy = 0;
   if (keys.has('KeyW')) iy += 1; if (keys.has('KeyS')) iy -= 1; if (keys.has('KeyA')) ix -= 1; if (keys.has('KeyD')) ix += 1;
@@ -303,14 +374,22 @@ function movePlayer(dt) {
     const fwd = [-Math.sin(yaw), Math.cos(yaw)]; // in plan coordinates (x east, y north)
     const rt = [Math.cos(yaw), Math.sin(yaw)];
     let mx = fwd[0] * iy + rt[0] * ix, my = fwd[1] * iy + rt[1] * ix; const l = Math.hypot(mx, my); mx /= l; my /= l;
-    const want = Math.atan2(mx, -my) + Math.PI; // agent faces +z locally
+    const want = Math.atan2(mx, -my); // Rocketbox agent faces -z locally
     let d = want - player.h; d = Math.atan2(Math.sin(d), Math.cos(d));
     player.h += d * (1 - Math.exp(-dt * 12));
     player.x += mx * player.speed * dt; player.y += my * player.speed * dt;
   } else if (player.speed > 0.05) {
     player.x += Math.sin(player.h) * player.speed * dt; player.y += -Math.cos(player.h) * player.speed * dt;
   }
-  [player.x, player.y] = collider.resolve(player.x, player.y, 0.4);
+  [player.x, player.y] = activeCollider().resolve(player.x, player.y, 0.35);
+  // entering / leaving the library through the south doors
+  if (lib) {
+    const inside = lib.contains(player.x, player.y);
+    if (inside && player.level == null) setLevel(1);
+    else if (!inside && player.level === 1) setLevel(null);
+    const near = player.level != null && lib.nearCore(player.x, player.y, player.level);
+    $('prompt').classList.toggle('hidden', !near);
+  }
 }
 
 init().catch((e) => { console.error(e); status('Error: ' + e.message); });
