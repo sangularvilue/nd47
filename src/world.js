@@ -25,7 +25,7 @@ export function buildWorld(data, T, scene, env) {
   ground.receiveShadow = true; scene.add(ground);
   // flat apron beyond the LiDAR extent, with a hole where the terrain mesh is
   const [bx0, by0, bx1, by1] = data.bounds;
-  const apronShape = new THREE.Shape([[-4500, -4500], [4700, -4500], [4700, 4500], [-4500, 4500]].map(([x, y]) => new THREE.Vector2(x, y)));
+  const apronShape = new THREE.Shape([[-30000, -30000], [30000, -30000], [30000, 30000], [-30000, 30000]].map(([x, y]) => new THREE.Vector2(x, y)));
   apronShape.holes.push(new THREE.Path([[bx0 + 2, by0 + 2], [bx0 + 2, by1 - 2], [bx1 - 2, by1 - 2], [bx1 - 2, by0 + 2]].map(([x, y]) => new THREE.Vector2(x, y))));
   const apronG = new THREE.ShapeGeometry(apronShape); apronG.rotateX(-Math.PI / 2);
   { const uv = apronG.attributes.uv, p = apronG.attributes.position; for (let i = 0; i < uv.count; i++) uv.setXY(i, p.getX(i) / 24, -p.getZ(i) / 24); }
@@ -260,7 +260,7 @@ export function buildWorld(data, T, scene, env) {
       if (b.n) out.named.push({ n: b.n, c: b.c, a: b.a });
 
       // --- roof
-      const stone = kind === 0 ? [0.93, 0.9, 0.82] : kind === 1 ? [0.95, 0.95, 0.95] : [0.78, 0.77, 0.75];
+      const stone = kind === 0 ? [0.74, 0.7, 0.62] : kind === 1 ? [0.85, 0.85, 0.85] : [0.62, 0.61, 0.59];
       if (roof === 'gable' || roof === 'hip') {
         const o = oriented, ov = kind === 1 ? 0.45 : 0.35;
         const pitch = b.n === 'Basilica of the Sacred Heart' ? 1.05 : kind === 1 ? 0.6 + rng() * 0.2 : 0.75 + rng() * 0.25;
@@ -363,8 +363,8 @@ export function buildWorld(data, T, scene, env) {
     const sc = (id, hex, tile) => (S && S[id] ? { scan: S[id], tint: hex ? new THREE.Color(hex) : S[id].avg.clone(), tile } : null);
     const FACADE_SCANS = { 0: { brick: sc('brick_wall_001', '#d8caa5', 1.6), lime: sc('large_sandstone_blocks', '#e3d9c3', 3.2) }, 2: { brick: sc('large_red_bricks', null, 1.8) }, 6: { brick: sc('large_red_bricks', '#b98365', 1.8) } };
     walls.forEach((gb, k) => mk(gb, facadePatch(new THREE.MeshStandardMaterial({ map: T.facade[k].map, roughnessMap: T.facade[k].mask, normalMap: T.facade[k].normal, vertexColors: true, roughness: 1, metalness: 0.0, envMapIntensity: 1.0 }), { bay: BAY[k][0], floor: BAY[k][1], stone: k === 0 ? 1 : 0, interior: k === 6 ? 0 : 1, key: k + (FACADE_SCANS[k] ? 's' : ''), ...(FACADE_SCANS[k] || {}) })));
-    const ROOF_SCAN = { slate: 'grey_roof_tiles', tile: 'clay_roof_tiles_02', shingle: 'grey_roof_01' };
-    for (const [k, gb] of Object.entries(roofs)) mk(gb, new THREE.MeshStandardMaterial(ROOF_SCAN[k] && S?.[ROOF_SCAN[k]] ? S.set(ROOF_SCAN[k], 2, { vertexColors: true, color: k === 'slate' ? 0x9aa0a8 : 0xffffff }) : { map: T.roof[k].map, roughnessMap: T.roof[k].mask, normalMap: T.roof[k].normal, vertexColors: true, roughness: 1, metalness: k === 'lead' || k === 'copper' ? 0.35 : 0 }));
+    const ROOF_SCAN = { slate: 'grey_roof_tiles', tile: 'clay_roof_tiles_02', shingle: 'grey_roof_01', flat: 'concrete_pavement' };
+    for (const [k, gb] of Object.entries(roofs)) mk(gb, new THREE.MeshStandardMaterial(ROOF_SCAN[k] && S?.[ROOF_SCAN[k]] ? S.set(ROOF_SCAN[k], k === 'flat' ? 1.2 : 2, { vertexColors: true, color: k === 'slate' ? 0x9aa0a8 : k === 'flat' ? 0xe6ddd0 : 0xffffff }) : { map: T.roof[k].map, roughnessMap: T.roof[k].mask, normalMap: T.roof[k].normal, vertexColors: true, roughness: 1, metalness: k === 'lead' || k === 'copper' ? 0.35 : 0 }));
     mk(trim, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.8 }));
     mk(units, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.6, metalness: 0.3 }));
   }
@@ -385,7 +385,7 @@ export function buildWorld(data, T, scene, env) {
   }
 
   // ---------------- trees ----------------
-  out.trees = buildTrees(data.trees, scene, T);
+  out.trees = T.skipTrees ? null : buildTrees(data.trees, scene, T);
   return out;
 }
 

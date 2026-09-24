@@ -61,6 +61,10 @@
   #refPanel .note { font-size: 12px; color: var(--dim); } #refErr { color: #ff8a80; font-size: 12px; min-height: 1em; }
   #refTag { position: absolute; top: 72px; right: 22px; font-family: 'Barlow Condensed'; letter-spacing: 0.14em; color: var(--gold); font-size: 14px; text-shadow: 0 1px 4px #000; }
   #gattr { position: fixed; left: 50%; transform: translateX(-50%); bottom: 4px; font-size: 11px; color: rgba(255,255,255,0.8); text-shadow: 0 1px 3px #000; max-width: 60vw; text-align: center; }
+  #letterbox i { position: fixed; left: 0; right: 0; height: 0; background: #000; z-index: 4; transition: height 1.2s ease; pointer-events: none; }
+  #letterbox i:first-child { top: 0; } #letterbox i:last-child { bottom: 0; }
+  body.cine #letterbox i { height: max(0px, calc((100vh - 100vw / 2.39) / 2)); }
+  #fader { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 3; }
   #touch { display: none; }
   body.touch.playing #touch { display: block; position: fixed; inset: 0; pointer-events: none; z-index: 6; }
   #touch .stick { position: absolute; width: 112px; height: 112px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.18); opacity: 0; transition: opacity .15s; }
@@ -93,11 +97,13 @@
   "@mapbox/vector-tile": "https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@2.0.4/+esm",
   "pbf": "https://cdn.jsdelivr.net/npm/pbf@4.0.1/+esm",
   "pmtiles": "https://cdn.jsdelivr.net/npm/pmtiles@4.3.0/+esm",
+  "@dgreenheck/ez-tree": "https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js",
   "meshoptimizer/simplifier": "https://cdn.jsdelivr.net/npm/meshoptimizer@1.2.0/meshopt_simplifier.js"
 } }
 </script>
 </head>
 <body>
+<div id="letterbox"><i></i><i></i></div><div id="fader"></div>
 <div id="loading"><div id="loadmsg">Loading…</div><div class="bar"></div></div>
 
 <div id="title" class="hidden">
@@ -116,7 +122,7 @@
 </div>
 
 <div id="hud" class="hidden">
-  <div id="mission" class="open"><div class="mt">GAME DAY</div><div class="ms">Notre Dame, Indiana · Tab to toggle</div><div id="objectives"></div></div>
+  <div id="mission"><div class="mt">GAME DAY</div><div class="ms">Notre Dame, Indiana · Tab to toggle</div><div id="objectives"></div></div>
   <canvas id="minimap" width="380" height="380"></canvas>
   <div id="loc"></div><div id="near"></div>
   <div id="modeTag"></div><div id="refTag"></div><div id="fps"></div><div id="gattr"></div>

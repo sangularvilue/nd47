@@ -149,7 +149,7 @@ export function buildLandmarks(data, T, scene, world) {
     const p = data.pois.find((q) => /Grotto/.test(q.n));
     // it is cut into the slope below the Basilica and opens away from it, toward St. Mary's Lake
     const bas = find(data, 'Basilica of the Sacred Heart');
-    if (p) L.grotto = buildGrotto(p.p, scene, world, bas ? Math.atan2(p.p[0] - bas.c[0], -(p.p[1] - bas.c[1])) : Math.PI / 4);
+    if (p) L.grotto = buildGrotto(p.p, scene, world, bas ? Math.atan2(p.p[0] - bas.c[0], -(p.p[1] - bas.c[1])) : Math.PI / 4, T);
   }
 
   // ---------- Clarke Memorial Fountain ("Stonehenge") ----------
@@ -180,10 +180,14 @@ export function buildLandmarks(data, T, scene, world) {
       const g = new THREE.Group();
       const isSacredHeart = Math.hypot(p.p[0] - 23.5, p.p[1] + 132.4) < 2;
       const mat = isSacredHeart ? bronze : /Rockne|Holtz|Leahy/.test(p.n) ? bronze : Math.random() < 0.5 ? white : bronze;
-      put(g, new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.4, 2.2), stoneM(0xcfc5b0))).position.y = 1.2;
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.55, 2.2, 10), mat); body.position.y = 3.5; g.add(body);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), mat); head.position.y = 4.85; g.add(head);
-      if (isSacredHeart) for (const s of [-1, 1]) { const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.3, 6), mat); arm.position.set(s * 0.65, 4.2, 0); arm.rotation.z = s * 1.0; g.add(arm); }
+      const lime = new THREE.MeshStandardMaterial({ color: 0xb9ae98, roughness: 0.85 });
+      for (const [w, h, y] of [[3.2, 0.35, 0.17], [2.7, 0.3, 0.5], [1.9, 2.1, 1.7], [2.3, 0.3, 2.9]]) put(g, new THREE.Mesh(new THREE.BoxGeometry(w, h, w), lime)).position.y = y;
+      const robe = new THREE.LatheGeometry([[0.55, 0], [0.5, 0.4], [0.4, 1.2], [0.36, 1.7], [0.42, 2.0], [0.2, 2.25], [0, 2.3]].map(([r, y]) => new THREE.Vector2(r, y)), 18);
+      { const p = robe.attributes.position; for (let j = 0; j < p.count; j++) { const x = p.getX(j), z = p.getZ(j), a = Math.atan2(z, x), k = 1 + 0.05 * Math.sin(a * 9) * (1 - p.getY(j) / 2.3); p.setXYZ(j, x * k, p.getY(j), z * k); } robe.computeVertexNormals(); }
+      const body = new THREE.Mesh(robe, mat); body.position.y = 3.05; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 12), mat); head.scale.set(0.9, 1.1, 1); head.position.y = 5.55; g.add(head);
+      if (isSacredHeart) for (const s of [-1, 1]) { const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.9, 4, 8), mat); arm.position.set(s * 0.55, 4.75, 0.12); arm.rotation.z = s * 1.05; arm.rotation.x = -0.25; g.add(arm); }
+      bronze.color.set(0x3d2e1c); bronze.metalness = 0.85; bronze.roughness = 0.38;
       at(g, p.p[0], p.p[1], 0); shadow(g); scene.add(g);
     }
   }
@@ -291,22 +295,24 @@ function buildStadium(b, T, scene) {
   return { x: c[0], y: c[1], group: g };
 }
 
-function buildGrotto(p, scene, world, facing) {
+function buildGrotto(p, scene, world, facing, T) {
   const g = new THREE.Group();
   const rng = mulberry(7);
-  const rockM = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true });
+  const rs = T.scan?.gray_rocks;
+  const rockM = new THREE.MeshStandardMaterial(rs ? { ...T.scan.set('gray_rocks', 1.4), vertexColors: true, color: 0x9a9690 } : { vertexColors: true, roughness: 1 });
   // Rock face (~13 m wide, 8 m tall) with an arched cave opening, built from stacked boulders
   const rocks = [];
   const inOpening = (x, y) => Math.abs(x) < 2.8 && y < 4.8 * Math.sqrt(Math.max(0, 1 - (x / 2.9) ** 2));
   const addRock = (x, y, z, r) => {
-    const geo = new THREE.DodecahedronGeometry(r, 0).toNonIndexed();
+    const geo = new THREE.IcosahedronGeometry(r, 2);
+    { const p = geo.attributes.position, s1 = rng() * 10; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i); const k = 1 + 0.16 * Math.sin(x * 3.1 / r + s1) * Math.cos(z * 2.7 / r - s1) + 0.1 * Math.sin(y * 5.3 / r + s1 * 2); p.setXYZ(i, x * k, y * k * 0.8, z * k); } geo.computeVertexNormals(); }
     geo.scale(1 + rng() * 0.5, 0.65 + rng() * 0.4, 0.8 + rng() * 0.5);
     geo.rotateY(rng() * 6); geo.rotateZ((rng() - 0.5) * 0.6);
     geo.translate(x, y, z);
-    const v = 0.14 + rng() * 0.1, tint = rng() < 0.2 ? [0.85, 1, 0.7] : [1, 0.93, 0.82];
+    const v = 0.55 + rng() * 0.35, tint = rng() < 0.25 ? [0.8, 0.95, 0.65] : [1, 0.96, 0.9];
     const col = []; for (let i = 0; i < geo.attributes.position.count; i++) col.push(v * tint[0], v * tint[1], v * tint[2]);
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    delete geo.attributes.uv; rocks.push(geo);
+    rocks.push(geo.index ? geo.toNonIndexed() : geo);
   };
   for (let y = 0.3; y < 8.5; y += 0.85) for (let x = -6.6; x <= 6.6; x += 0.95) {
     const xx = x + (rng() - 0.5) * 0.5, yy = y + (rng() - 0.5) * 0.4;
@@ -326,14 +332,17 @@ function buildGrotto(p, scene, world, facing) {
   // statue niche up and to the right
   const mary = new THREE.Group();
   const white = new THREE.MeshStandardMaterial({ color: 0xf6f3ec, roughness: 0.5 });
-  put(mary, new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.6, 10), white)).position.y = 0.8;
-  put(mary, new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), white)).position.y = 1.72;
+  { const robe = new THREE.LatheGeometry([[0.34, 0], [0.3, 0.3], [0.22, 0.9], [0.2, 1.25], [0.24, 1.42], [0.12, 1.6], [0, 1.65]].map(([r, y]) => new THREE.Vector2(r, y)), 20);
+    const p = robe.attributes.position; for (let j = 0; j < p.count; j++) { const x = p.getX(j), z = p.getZ(j), a = Math.atan2(z, x), k = 1 + 0.06 * Math.sin(a * 11) * (1 - p.getY(j) / 1.65); p.setXYZ(j, x * k, p.getY(j), z * k); } robe.computeVertexNormals();
+    mary.add(new THREE.Mesh(robe, white));
+    const veil = new THREE.SphereGeometry(0.16, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.62); const vm = new THREE.Mesh(veil, white); vm.scale.set(1, 1.25, 1); vm.position.y = 1.66; mary.add(vm);
+    for (const s of [-1, 1]) { const hand = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.22, 3, 6), white); hand.position.set(s * 0.05, 1.18, 0.2); hand.rotation.set(-0.7, 0, s * 0.35); mary.add(hand); } }
   const sash = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.12, 10), new THREE.MeshStandardMaterial({ color: 0x5a86c4 })); sash.position.y = 1.0; mary.add(sash);
   mary.position.set(3.6, 4.6, 0.2); g.add(mary);
   const niche = new THREE.Mesh(new THREE.CircleGeometry(0.75, 12), new THREE.MeshStandardMaterial({ color: 0x2a2724, roughness: 1 })); niche.position.set(3.6, 5.4, -0.25); g.add(niche);
   // candle racks — hundreds of flickering votives
-  const candG = new THREE.CylinderGeometry(0.035, 0.035, 0.12, 5);
-  const candM = new THREE.MeshStandardMaterial({ color: 0xff9a3a, emissive: 0xff7a1a, emissiveIntensity: 3 });
+  const candG = new THREE.CylinderGeometry(0.045, 0.04, 0.1, 8);
+  const candM = new THREE.MeshStandardMaterial({ color: 0x8a1a14, emissive: 0xff5a14, emissiveIntensity: 1.6, roughness: 0.2 }); // red votive glass
   const n = 420; const inst = new THREE.InstancedMesh(candG, candM, n);
   const m4 = new THREE.Matrix4();
   for (let i = 0; i < n; i++) {

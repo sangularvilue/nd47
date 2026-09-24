@@ -25,9 +25,10 @@ export function installMaterial(m, csm) {
   m.userData.installed = true;
   m.clippingPlanes = [MIRROR_CLIP];
   const patches = m.userData.patches || [];
+  const own = Object.prototype.hasOwnProperty.call(m, 'onBeforeCompile') ? m.onBeforeCompile : null;
   let csmHook = null;
   if (csm) { csm.setupMaterial(m); csmHook = m.onBeforeCompile; }
-  m.onBeforeCompile = (sh, r) => { if (csmHook) csmHook.call(m, sh, r); for (const p of patches) p(sh); };
+  m.onBeforeCompile = (sh, r) => { if (own) own.call(m, sh, r); if (csmHook) csmHook.call(m, sh, r); for (const p of patches) p(sh); };
   m.customProgramCacheKey = () => (m.userData.key || '') + (csm ? '|csm' : '');
   m.needsUpdate = true;
 }

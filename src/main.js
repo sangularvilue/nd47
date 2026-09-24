@@ -11,6 +11,7 @@ import { GoogleReference } from './googletiles.js';
 import { loadScans } from './scans.js';
 import { buildFallingLeaves, buildUndergrowth } from './ambient.js';
 import { loadKit, cloneAvatar } from './avatars.js';
+import { buildEzTrees } from './eztrees.js';
 import { makeTextures } from './textures.js';
 import { buildWorld } from './world.js';
 import { buildLandmarks } from './landmarks.js';
@@ -24,9 +25,10 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 
 // Quality: ultra (default on desktop) · high · low — press O to cycle, or add #high / #low to the URL.
 const QUALITIES = ['ultra', 'high', 'low'];
-let quality = QUALITIES.includes(location.hash.slice(1)) ? location.hash.slice(1) : isTouch ? 'low' : 'ultra';
+// Phones get 'high': modern phones (A17/A18-class) handle AO, grass and cascaded shadows fine
+let quality = QUALITIES.includes(location.hash.slice(1)) ? location.hash.slice(1) : isTouch ? 'high' : 'ultra';
 const renderer = new THREE.WebGLRenderer({ antialias: false, stencil: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-const pixelRatio = () => Math.min(devicePixelRatio, quality === 'ultra' ? 1.5 : quality === 'high' ? 1.2 : 1);
+const pixelRatio = () => Math.min(devicePixelRatio, quality === 'ultra' ? 1.5 : quality === 'high' ? (isTouch ? 1.75 : 1.25) : 1);
 renderer.setPixelRatio(pixelRatio());
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.NoToneMapping; // tone mapping runs in the post stack
@@ -35,21 +37,22 @@ renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadow
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 9000);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 30000);
 
 // --- sky & sun: mid-October, ~2:30 pm, sun in the south-west
-const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 30), THREE.MathUtils.degToRad(215));
+// Saturday Oct 17, ~4:45 pm EDT at Notre Dame: sun ~17° up, compass azimuth ~235° (SW) → three azimuth 305°
+const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 17), THREE.MathUtils.degToRad(305));
 const skyObj = makeSky(scene, renderer, sunDir);
-scene.environment = skyObj.env; scene.environmentIntensity = 0.9;
-scene.fog = new THREE.FogExp2(0xaec0cc, 0.00036);
+scene.environment = skyObj.env; scene.environmentIntensity = 0.75;
+scene.fog = null; // atmosphere is a depth-based post effect (src/atmosphere.js)
 // Cascaded shadows: crisp near the camera, still present on distant buildings
 const csm = new CSM({
   maxFar: quality === 'low' ? 500 : 1000, cascades: quality === 'low' ? 2 : 3, mode: 'practical', parent: scene, shadowMapSize: quality === 'ultra' ? 3072 : quality === 'high' ? 2048 : 1024,
-  lightDirection: sunDir.clone().negate(), camera, lightIntensity: 3.4, lightNear: 1, lightFar: 3000, shadowBias: -0.00012,
+  lightDirection: sunDir.clone().negate(), camera, lightIntensity: 4.2, lightNear: 1, lightFar: 3000, shadowBias: -0.00012,
 });
 csm.fade = true;
-for (const l of csm.lights) { l.color.set(0xffe4bd); l.shadow.normalBias = 0.35; }
-scene.add(new THREE.HemisphereLight(0xbcd3e8, 0x5b5a3c, 0.75));
+for (const l of csm.lights) { l.color.set(0xffc58f); l.shadow.normalBias = 0.35; }
+scene.add(new THREE.HemisphereLight(0x9db6d8, 0x5e4a30, 0.62));
 let post;
 
 // --- state
@@ -59,7 +62,7 @@ let yaw = 0, pitch = 0.18, camDist = 4.6;
 let agent = makeAgent();
 const player = { x: 25, y: -250, h: Math.PI, speed: 0 };
 const drone = new THREE.Vector3(), droneRot = { yaw: 0, pitch: -0.3 };
-let world, L, people, hud, collider, grass, leaves, worldObjs = [];
+let world, L, people, hud, collider, grass, leaves, ezTrees, worldObjs = [];
 // Google Photorealistic 3D Tiles reference (G cycles off → Google only → both; key entered in the Reference panel)
 const gref = new GoogleReference(scene, camera, renderer);
 const REF_MODES = ['off', 'google', 'both'];
@@ -99,14 +102,19 @@ async function init() {
   TER.t.carveWater(data.areas.filter((a) => a.t === 'water' || a.t === 'fountain'));
   { const tt = TER.t.texture(); G.terr.value = tt.tex; G.terrB.value.copy(tt.bounds); }
   status('Raising 1,500 buildings…'); await tick();
+  T.skipTrees = true;
   world = buildWorld(data, T, scene, { sunDir });
+  status('Growing 8,700 trees (EZ-Tree)…'); await tick();
+  try { ezTrees = await buildEzTrees(data.trees, scene, renderer, quality === 'ultra' ? { nearR: 150, nearMax: 700, res: 320 } : quality === 'high' ? { nearR: 90, nearMax: 320, res: 256 } : { nearR: 50, nearMax: 120, res: 192 }); console.log('trees', ezTrees.variants.join(' | ')); }
+  catch (e) { console.warn('ez-tree failed, using fallback trees', e); T.skipTrees = false; }
   status('Gilding the Dome…'); await tick();
   L = buildLandmarks(data, T, scene, world);
+  void 0;
   status('Filling the lots for kickoff…'); await tick();
   status('Dressing the crowd (Rocketbox avatars)…'); await tick();
   const kit = await loadKit((d, n) => status(`Dressing the crowd… ${d}/${n}`)).catch((e) => { console.warn(e); return null; });
   status('Filling the lots for kickoff…'); await tick();
-  people = buildPeople(data, world, L, scene, kit);
+  people = buildPeople(data, world, L, scene, kit, quality === 'ultra' ? { near: 140, nearR: 60, farTris: 1100 } : quality === 'high' ? { near: 90, nearR: 45, farTris: 800 } : { near: 40, nearR: 30, farTris: 400 });
   if (kit) { const ra = makeRocketAgent(kit, cloneAvatar); if (ra) agent = ra; }
   status('Placing benches, lamps & crosswalks…'); await tick();
   buildProps(data, scene);
@@ -119,13 +127,14 @@ async function init() {
   scene.add(agent);
   status('Compiling shaders…'); await tick();
   finalize(scene, csm);
-  post = makePost(renderer, scene, camera, quality);
+  post = makePost(renderer, scene, camera, quality, { sunDir, sunMesh: skyObj.sunMesh, groundY: TER.h(25, -300) });
   renderer.compile(scene, camera);
   // spawn on the main quad south of the Dome, facing it
   player.x = 25; player.y = -300; player.h = Math.PI; yaw = 0; // back to the camera, facing the Dome
   $('loading').classList.add('hidden');
   $('title').classList.remove('hidden');
-  window.__nd = { scene, camera, renderer, world, L, people, player, setMode, drone, droneRot, setView, csm, get post() { return post; }, setQuality };
+  document.body.classList.add('cine');
+  window.__nd = { setTitleT: (t) => { titleT = t; }, scene, camera, renderer, world, L, people, player, setMode, drone, droneRot, setView, csm, get post() { return post; }, setQuality };
   requestAnimationFrame(loop);
 }
 
@@ -181,6 +190,9 @@ function setMode(m) {
   if (m === 'map') prevMode = mode;
   if (m === 'drone' && mode === 'play') { camera.getWorldPosition(drone); const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ'); droneRot.yaw = e.y; droneRot.pitch = e.x; }
   mode = m;
+  document.body.classList.toggle('cine', m === 'title');
+  if (m !== 'title') $('fader').style.opacity = '0';
+  if (m === 'play') camSmooth.copy(camera.position);
   document.body.classList.toggle('playing', m !== 'title');
   document.body.classList.toggle('drone', m === 'drone');
   $('title').classList.toggle('hidden', m !== 'title');
@@ -200,22 +212,38 @@ const VIEWS = () => [
   ['Library Quad — DOE facility', [L.doe.x + 30, 50, L.doe.y - 90], [L.doe.x, 5, L.doe.y]],
 ];
 function setView(p, t) { p = [p[0], p[1] + TER.h(p[0], p[2]), p[2]]; t = [t[0], t[1] + TER.h(t[0], t[2]), t[2]]; drone.set(p[0], p[1], -p[2]); const d = new THREE.Vector3(t[0] - p[0], t[1] - p[1], -(t[2] - p[2])); droneRot.yaw = Math.atan2(-d.x, -d.z); droneRot.pitch = Math.atan2(d.y, Math.hypot(d.x, d.z)); }
-function tour(n) { const v = VIEWS()[n - 1]; if (!v) return; if (mode !== 'drone') setMode('drone'); setView(v[1], v[2]); flash(v[0]); }
+function tour(n) { const v = VIEWS()[n - 1]; if (!v) return; if (mode !== 'drone') setMode('drone'); setView(v[1], v[2]); flash(v[0]); camera.fov = 45; camera.updateProjectionMatrix(); }
 function flash(t) { const e = $('loc'); e.textContent = t.toUpperCase(); e.classList.remove('show'); void e.offsetWidth; e.classList.add('show'); }
 
 // --- loop
 const clock = new THREE.Clock();
 let titleT = 0, fpsT = 0, frames = 0;
+const camSmooth = new THREE.Vector3();
+// Title sequence: [from, to, lookAt, fov] in plan coords [x, height above ground, y]
+const SHOTS = () => [
+  [[L.dome.x + 14, 7, L.dome.y - 200], [L.dome.x + 6, 11, L.dome.y - 150], [L.dome.x, 44, L.dome.y], 36],
+  [[L.mural.x - 14, 2.5, L.mural.y - 170], [L.mural.x - 6, 3.5, L.mural.y - 125], [L.mural.x, 34, L.mural.y], 38],
+  [[-760, 12, -60], [-690, 13, -30], [L.dome.x, 34, L.dome.y], 30],
+  [[L.stadium.x - 330, 95, L.stadium.y - 160], [L.stadium.x - 250, 80, L.stadium.y - 280], [L.stadium.x, 5, L.stadium.y], 34],
+  [[L.basilica.x - 75, 4, L.basilica.y + 25], [L.basilica.x - 60, 6, L.basilica.y + 5], [L.basilica.x, 48, L.basilica.y], 40],
+  [[L.grotto.x - 16, 2.2, L.grotto.y + 14], [L.grotto.x - 11, 2.4, L.grotto.y + 9], [L.grotto.x, 2.8, L.grotto.y], 42],
+];
 const tmpV = new THREE.Vector3();
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, clock.getDelta());
   if (mode === 'title') {
-    titleT += dt * 0.05;
-    const r = 260, cx = L.dome.x, cy = L.dome.y;
-    camera.position.set(cx + Math.cos(titleT) * r, 95 + Math.sin(titleT * 0.7) * 15, -(cy + Math.sin(titleT) * r));
-    camera.position.y += TER.h(cx, cy);
-    camera.lookAt(cx, 38 + TER.h(cx, cy), -cy);
+    titleT += dt;
+    const shots = SHOTS(), DUR = 9, i = Math.floor(titleT / DUR) % shots.length, k = (titleT % DUR) / DUR;
+    const [from, to, look, fov] = shots[i];
+    const e = k * k * (3 - 2 * k) * 0.85 + k * 0.15;
+    const lerp3 = (a, b) => [a[0] + (b[0] - a[0]) * e, a[1] + (b[1] - a[1]) * e, a[2] + (b[2] - a[2]) * e];
+    const p = lerp3(from, to);
+    camera.position.set(p[0], p[1] + TER.h(p[0], p[2]), -p[2]);
+    camera.lookAt(look[0], look[1] + TER.h(look[0], look[2]), -look[2]);
+    if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
+    const fade = Math.min(1, Math.min(k, 1 - k) * DUR / 0.9);
+    $('fader').style.opacity = String(1 - fade);
   } else if (mode === 'play' || mode === 'map') {
     if (mode === 'play') movePlayer(dt);
     // third-person camera over the right shoulder
@@ -223,9 +251,12 @@ function loop() {
     const tgt = new THREE.Vector3(player.x, gy + 1.62, -player.y);
     const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
     const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-    camera.position.copy(tgt).addScaledVector(dir, camDist).addScaledVector(right, 0.55);
-    camera.position.y = Math.max(TER.h(camera.position.x, -camera.position.z) + 0.5, camera.position.y);
+    const want = tgt.clone().addScaledVector(dir, camDist).addScaledVector(right, 0.55);
+    want.y = Math.max(TER.h(want.x, -want.z) + 0.5, want.y);
+    camSmooth.lerp(want, 1 - Math.exp(-dt * 10)); // damped follow
+    camera.position.copy(camSmooth);
     camera.lookAt(tgt.x + right.x * 0.55, tgt.y, tgt.z + right.z * 0.55);
+    if (camera.fov !== 50) { camera.fov = 50; camera.updateProjectionMatrix(); }
   } else if (mode === 'drone') {
     const f = new THREE.Vector3(-Math.sin(droneRot.yaw) * Math.cos(droneRot.pitch), Math.sin(droneRot.pitch), -Math.cos(droneRot.yaw) * Math.cos(droneRot.pitch));
     const r = new THREE.Vector3(Math.cos(droneRot.yaw), 0, -Math.sin(droneRot.yaw));
@@ -246,6 +277,7 @@ function loop() {
   camera.updateMatrixWorld();
   csm.update();
   if (leaves) leaves.update(camera.position);
+  if (ezTrees) ezTrees.update(dt, camera.position);
   if (grass) { grass.update(camera.position); if (gref.mode === 'google') grass.mesh.visible = false; }
   skyObj.update(dt, camera.position);
   gref.update();

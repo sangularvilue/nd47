@@ -10,7 +10,7 @@ const PANTS = ['#2b3442', '#1f2227', '#4a5a73', '#6d6150', '#2e3b55', '#bfb39a']
 const SKIN = ['#f1c9a5', '#e0ac85', '#c68b62', '#8d5a3b', '#5e3b26', '#f5d5b8'];
 const CAR = ['#e8e8e8', '#1b1b1d', '#6d7278', '#9aa0a6', '#1d2f55', '#7a1a1a', '#c7c2b5', '#2f4a3a', '#384250', '#b04a1a'];
 
-export function buildPeople(data, world, L, scene, kit) {
+export function buildPeople(data, world, L, scene, kit, opts = {}) {
   const rng = mulberry(2024);
   const statics = []; // [x, y, heading]
   const cars = []; const tents = [];
@@ -118,7 +118,7 @@ export function buildPeople(data, world, L, scene, kit) {
     return [p[0][0], p[0][1], 0];
   };
   for (const P of people) if (P.w) { const r = pt(P.w); P.x = r[0]; P.y = r[1]; P.h = r[2]; }
-  const crowd = kit ? makeCrowd(kit, people, scene) : null;
+  const crowd = kit ? makeCrowd(kit, people, scene, opts) : null;
   function update(dt, cam) {
     for (const P of people) {
       const w = P.w; if (!w) continue;

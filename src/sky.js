@@ -5,7 +5,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 export function makeSky(scene, renderer, sunDir) {
   const sky = new Sky(); sky.scale.setScalar(8000);
   const su = sky.material.uniforms;
-  su.turbidity.value = 2.2; su.rayleigh.value = 2.0; su.mieCoefficient.value = 0.0025; su.mieDirectionalG.value = 0.85;
+  su.turbidity.value = 5.5; su.rayleigh.value = 2.4; su.mieCoefficient.value = 0.0055; su.mieDirectionalG.value = 0.9;
   su.sunPosition.value.copy(sunDir);
   scene.add(sky);
 
@@ -30,7 +30,7 @@ export function makeSky(scene, renderer, sunDir) {
         float sunAmt = clamp(dot(d, normalize(uSun)) * 0.5 + 0.5, 0.0, 1.0);
         float nl = fbm(p + normalize(uSun.xz) * 0.08);
         float lit = clamp(0.55 + (n - nl) * 4.0, 0.0, 1.0);
-        vec3 col = mix(vec3(0.55, 0.6, 0.68), vec3(1.05, 1.0, 0.95), lit) * mix(0.9, 1.25, sunAmt);
+        vec3 col = mix(vec3(0.46, 0.5, 0.62), vec3(1.25, 0.98, 0.78), lit) * mix(0.85, 1.45, pow(sunAmt, 3.0));
         col = mix(col, vec3(0.45, 0.5, 0.58), thick * 0.35);
         float horizon = smoothstep(0.015, 0.2, d.y);
         gl_FragColor = vec4(col * 1.6, cov * horizon * 0.92);
@@ -40,10 +40,13 @@ export function makeSky(scene, renderer, sunDir) {
   clouds.renderOrder = -1;
   scene.add(clouds);
 
+  // sun disc: the light source for god rays (kept camera-relative in update)
+  const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(110, 24, 12), new THREE.MeshBasicMaterial({ color: 0xffe0b0, fog: false, depthWrite: false }));
+  sunMesh.frustumCulled = false; scene.add(sunMesh);
   const pmrem = new THREE.PMREMGenerator(renderer);
   const s2 = new THREE.Scene(); const sk = new Sky(); sk.scale.setScalar(1000);
   for (const k of ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG']) sk.material.uniforms[k].value = su[k].value;
   sk.material.uniforms.sunPosition.value.copy(sunDir); s2.add(sk);
   const env = pmrem.fromScene(s2, 0).texture;
-  return { sky, clouds, env, update(dt, camPos) { cloudMat.uniforms.uTime.value += dt; clouds.position.copy(camPos); sky.position.copy(camPos); } };
+  return { sky, clouds, env, sunMesh, update(dt, camPos) { cloudMat.uniforms.uTime.value += dt; clouds.position.copy(camPos); sky.position.copy(camPos); sunMesh.position.copy(camPos).addScaledVector(sunDir, 6000); } };
 }
