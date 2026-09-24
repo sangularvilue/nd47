@@ -10,5 +10,6 @@ Phone: left thumb joystick, drag right side to look.
 - Buildings, roads, paths, land use, street furniture: © OpenStreetMap contributors, ODbL (https://www.openstreetmap.org/copyright)
 - Building heights and terrain: USGS 3D Elevation Program lidar, IN_Statewide_Opt1_B1_2017 (public domain)
 - Optional reference layer: Google Photorealistic 3D Tiles, streamed live with the viewer's own API key (never stored here)
+- People: Microsoft Rocketbox Avatar Library (MIT, https://github.com/microsoft/Microsoft-Rocketbox)
 - Scanned materials: Poly Haven (CC0, https://polyhaven.com)
 - Libraries: three.js, postprocessing, n8ao, 3d-tiles-renderer (loaded from jsDelivr)

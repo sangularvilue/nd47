@@ -79,3 +79,32 @@ export class Collider {
     return [x, y];
   }
 }
+
+// Rocketbox business-suit avatar as the agent: idle / walk / run blended by speed.
+export function makeRocketAgent(kit, cloneAvatar) {
+  const av = kit.avatars.Business_Male_01;
+  if (!av) return null;
+  const obj = cloneAvatar(av);
+  obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; if (o.userData.part === 'opacity') o.visible = false; } }); // shaved head
+  const root = new THREE.Group(); root.add(obj);
+  const mixer = new THREE.AnimationMixer(obj);
+  const act = (n) => (kit.clips[n] ? mixer.clipAction(kit.clips[n]) : null);
+  const acts = { idle: act('m_idle_neutral_01'), walk: act('m_walk_neutral_02'), run: act('m_run_neutral_01') };
+  for (const a of Object.values(acts)) if (a) { a.play(); a.setEffectiveWeight(0); }
+  if (acts.idle) acts.idle.setEffectiveWeight(1);
+  root.userData = { mixer, acts, w: { idle: 1, walk: 0, run: 0 } };
+  return root;
+}
+export function animateRocketAgent(agent, speed, dt) {
+  const u = agent.userData;
+  const target = speed < 0.2 ? { idle: 1, walk: 0, run: 0 } : speed < 3.2 ? { idle: 0, walk: 1, run: 0 } : { idle: 0, walk: 0, run: 1 };
+  const k = 1 - Math.exp(-dt * 8);
+  for (const n of ['idle', 'walk', 'run']) {
+    u.w[n] += (target[n] - u.w[n]) * k;
+    const a = u.acts[n]; if (!a) continue;
+    a.setEffectiveWeight(u.w[n]);
+    if (n === 'walk') a.timeScale = Math.max(0.6, speed / 1.5);
+    if (n === 'run') a.timeScale = Math.max(0.7, speed / 5.0);
+  }
+  u.mixer.update(dt);
+}

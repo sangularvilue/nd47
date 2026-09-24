@@ -10,11 +10,12 @@ import { isTouch, setupTouch } from './touch.js';
 import { GoogleReference } from './googletiles.js';
 import { loadScans } from './scans.js';
 import { buildFallingLeaves, buildUndergrowth } from './ambient.js';
+import { loadKit, cloneAvatar } from './avatars.js';
 import { makeTextures } from './textures.js';
 import { buildWorld } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { buildPeople } from './people.js';
-import { makeAgent, animateAgent, Collider } from './player.js';
+import { makeAgent, animateAgent, makeRocketAgent, animateRocketAgent, Collider } from './player.js';
 import { buildHud } from './hud.js';
 
 const $ = (id) => document.getElementById(id);
@@ -55,7 +56,7 @@ let post;
 const keys = new Set();
 let mode = 'title'; // title | play | drone | map
 let yaw = 0, pitch = 0.18, camDist = 4.6;
-const agent = makeAgent();
+let agent = makeAgent();
 const player = { x: 25, y: -250, h: Math.PI, speed: 0 };
 const drone = new THREE.Vector3(), droneRot = { yaw: 0, pitch: -0.3 };
 let world, L, people, hud, collider, grass, leaves, worldObjs = [];
@@ -102,7 +103,11 @@ async function init() {
   status('Gilding the Dome…'); await tick();
   L = buildLandmarks(data, T, scene, world);
   status('Filling the lots for kickoff…'); await tick();
-  people = buildPeople(data, world, L, scene);
+  status('Dressing the crowd (Rocketbox avatars)…'); await tick();
+  const kit = await loadKit((d, n) => status(`Dressing the crowd… ${d}/${n}`)).catch((e) => { console.warn(e); return null; });
+  status('Filling the lots for kickoff…'); await tick();
+  people = buildPeople(data, world, L, scene, kit);
+  if (kit) { const ra = makeRocketAgent(kit, cloneAvatar); if (ra) agent = ra; }
   status('Placing benches, lamps & crosswalks…'); await tick();
   buildProps(data, scene);
   grass = quality === 'low' ? null : buildGrass(data, scene);
@@ -117,7 +122,7 @@ async function init() {
   post = makePost(renderer, scene, camera, quality);
   renderer.compile(scene, camera);
   // spawn on the main quad south of the Dome, facing it
-  player.x = 25; player.y = -300; player.h = 0; yaw = 0;
+  player.x = 25; player.y = -300; player.h = Math.PI; yaw = 0; // back to the camera, facing the Dome
   $('loading').classList.add('hidden');
   $('title').classList.remove('hidden');
   window.__nd = { scene, camera, renderer, world, L, people, player, setMode, drone, droneRot, setView, csm, get post() { return post; }, setQuality };
@@ -234,7 +239,7 @@ function loop() {
     camera.position.copy(drone); camera.lookAt(tmpV.copy(drone).add(f));
   }
   agent.position.set(player.x, TER.h(player.x, player.y), -player.y); agent.rotation.y = player.h;
-  animateAgent(agent, player.speed, dt);
+  if (agent.userData.mixer) animateRocketAgent(agent, player.speed, dt); else animateAgent(agent, player.speed, dt);
   people.update(dt, camera.position);
   if (world.water) world.water.material.uniforms.time.value += dt * 0.5;
   G.time.value += dt;
