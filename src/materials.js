@@ -1,6 +1,8 @@
 // Shader patching that composes with CSM, plus the bespoke facade / detail / wind patches.
 import * as THREE from 'three';
 
+// Mirror clip plane shared by every material: parked far away, moved to the water surface only while the lake reflection renders.
+export const MIRROR_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e6);
 export const G = { time: { value: 0 }, wind: { value: new THREE.Vector2(0.8, 0.3) }, terr: { value: null }, terrB: { value: new THREE.Vector4(0, 0, 1, 1) } }; // shared uniforms
 
 export function patch(mat, key, fn) {
@@ -21,6 +23,7 @@ export function finalize(scene, csm) {
 export function installMaterial(m, csm) {
   if (m.userData.installed) return;
   m.userData.installed = true;
+  m.clippingPlanes = [MIRROR_CLIP];
   const patches = m.userData.patches || [];
   let csmHook = null;
   if (csm) { csm.setupMaterial(m); csmHook = m.onBeforeCompile; }
@@ -30,11 +33,14 @@ export function installMaterial(m, csm) {
 }
 
 // Two-scale texturing: the same map sampled at k× breaks tiling and adds close-up detail.
-export function addDetail(mat, k = 7.3, amt = 0.5) {
-  return patch(mat, 'detail' + k + amt, (sh) => {
-    sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `
+// Optional tint: keep the scan's luminance detail but recolour it (a brown grass scan becomes a green October lawn).
+export function addDetail(mat, k = 7.3, amt = 0.5, tint = null) {
+  return patch(mat, 'detail' + k + amt + (tint ? 't' : ''), (sh) => {
+    if (tint) { sh.uniforms.uTint = { value: tint.color }; sh.uniforms.uAvgL = { value: tint.avgL }; }
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>' + String.fromCharCode(10) + 'uniform vec3 uTint; uniform float uAvgL;').replace('#include <map_fragment>', `
       vec4 c1 = texture2D( map, vMapUv ); vec4 c2 = texture2D( map, vMapUv * ${k.toFixed(2)} ); vec4 c3 = texture2D( map, vMapUv * 0.137 );
-      diffuseColor.rgb *= mix( c1.rgb, c2.rgb, ${amt.toFixed(2)} ) * mix( 1.0, c3.g / max( c1.g, 0.02 ), 0.35 );`);
+      vec3 dm = mix( c1.rgb, c2.rgb, ${amt.toFixed(2)} ) * mix( 1.0, c3.g / max( c1.g, 0.02 ), 0.35 );
+      ${tint ? 'diffuseColor.rgb *= uTint * clamp(dot(dm, vec3(0.2126, 0.7152, 0.0722)) / uAvgL, 0.0, 3.0);' : 'diffuseColor.rgb *= dm;'}`);
   });
 }
 
@@ -54,14 +60,18 @@ function worldVaryings(sh) {
 
 // Facade: interior-mapped rooms behind glass, limestone base course, ground grime.
 // Mask texture (roughnessMap): R = glass, G = roughness.
-export function facadePatch(mat, { bay, floor, depth = 5.5, stone = 1, interior = 1, key }) {
+export function facadePatch(mat, { bay, floor, depth = 5.5, stone = 1, interior = 1, key, brick = null, lime = null }) {
   return patch(mat, 'facade' + key, (sh) => {
     worldVaryings(sh);
     sh.uniforms.uCell = { value: new THREE.Vector3(bay, floor, depth) };
     sh.uniforms.uStone = { value: stone };
     sh.uniforms.uInterior = { value: interior };
     sh.uniforms.uTerr = G.terr; sh.uniforms.uTB = G.terrB;
+    const scanU = (p, s) => { sh.uniforms[p + 'D'] = { value: s?.scan.map || null }; sh.uniforms[p + 'N'] = { value: s?.scan.normal || null }; sh.uniforms[p + 'R'] = { value: s?.scan.rough || null }; sh.uniforms[p + 'K'] = { value: s ? s.tint.clone().multiply(new THREE.Color(1 / Math.max(s.scan.avg.r, 0.02), 1 / Math.max(s.scan.avg.g, 0.02), 1 / Math.max(s.scan.avg.b, 0.02))) : new THREE.Color(1, 1, 1) }; sh.uniforms[p + 'T'] = { value: s ? s.tile : 1 }; };
+    scanU('uBk', brick); scanU('uLs', lime);
+    sh.uniforms.uHasBk = { value: brick ? 1 : 0 }; sh.uniforms.uHasLs = { value: lime ? 1 : 0 };
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+      uniform sampler2D uBkD, uBkN, uBkR, uLsD, uLsN, uLsR; uniform vec3 uBkK, uLsK; uniform float uBkT, uLsT, uHasBk, uHasLs;
       uniform vec3 uCell; uniform float uStone; uniform float uInterior; uniform sampler2D uTerr; uniform vec4 uTB;
       float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
       vec3 roomColor(vec2 uv, vec3 V, vec3 N, float seed) {
@@ -98,6 +108,12 @@ export function facadePatch(mat, { bay, floor, depth = 5.5, stone = 1, interior 
     sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
       vec4 fMask = texture2D(roughnessMap, vRoughnessMapUv);
       float win = fMask.r;
+      // scanned materials: brick where mask.b ≈ 1, limestone where ≈ 0.5 (world-metre UVs)
+      vec2 wUv = vRoughnessMapUv * uCell.xy;
+      float isBk = step(0.75, fMask.b) * uHasBk, isLs = step(0.3, fMask.b) * (1.0 - step(0.75, fMask.b)) * uHasLs;
+      vec2 bkUv = wUv / uBkT, lsUv = wUv / uLsT;
+      if (isBk > 0.5) diffuseColor.rgb = vColor * uBkK * texture2D(uBkD, bkUv).rgb;
+      else if (isLs > 0.5) diffuseColor.rgb = vColor * uLsK * texture2D(uLsD, lsUv).rgb;
       vec3 roomCol = vec3(0.0);
       float cellPx = max(length(fwidth(vRoughnessMapUv)), 1e-4);
       float detailK = 1.0 - smoothstep(0.08, 0.35, cellPx);
@@ -116,6 +132,10 @@ export function facadePatch(mat, { bay, floor, depth = 5.5, stone = 1, interior 
       diffuseColor.rgb *= mix(0.72, 1.0, smoothstep(0.0, 2.2, gy));`);
     sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       totalEmissiveRadiance += roomCol * win * 0.55;`);
+    sh.fragmentShader = sh.fragmentShader.replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+      'vec3 mapN = (isBk > 0.5 ? texture2D(uBkN, bkUv).xyz : isLs > 0.5 ? texture2D(uLsN, lsUv).xyz : texture2D( normalMap, vNormalMapUv ).xyz) * 2.0 - 1.0;')
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        if (isBk > 0.5) roughnessFactor = texture2D(uBkR, bkUv).g; else if (isLs > 0.5) roughnessFactor = texture2D(uLsR, lsUv).g;`);
   });
 }
 

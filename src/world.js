@@ -1,7 +1,7 @@
 // Builds the OSM-derived world: ground, land areas, roads, generic buildings, trees.
 import * as THREE from 'three';
 import { Water } from 'three/addons/objects/Water.js';
-import { addDetail, facadePatch } from './materials.js';
+import { addDetail, facadePatch, MIRROR_CLIP } from './materials.js';
 import { buildTrees } from './foliage.js';
 import { TER, baseOf, drapeTriangles } from './terrain.js';
 import { GeoBuilder, W, area, centroid, capPoly, obb, inset, outset, norm, hash1, mulberry, pip } from './geo.js';
@@ -16,7 +16,11 @@ export function buildWorld(data, T, scene, env) {
   const matOpts = { roughness: 0.92, metalness: 0.0 };
 
   // ---------------- ground ----------------
-  const groundMat = addDetail(new THREE.MeshStandardMaterial({ map: T.ground.base, ...matOpts }));
+  const S = T.scan;
+  // tint helper for scans: target colour + the scan's average luminance
+  const tintOf = (id, hex) => (S && S[id] ? { color: new THREE.Color(hex), avgL: 0.2126 * S[id].avg.r + 0.7152 * S[id].avg.g + 0.0722 * S[id].avg.b } : null);
+  const LAWN = '#5b7a33';
+  const groundMat = addDetail(new THREE.MeshStandardMaterial(S ? S.set('leafy_grass', 24 / 5) : { map: T.ground.base, ...matOpts }), 5.1, 0.35, tintOf('leafy_grass', '#587631'));
   const ground = new THREE.Mesh(TER.t.mesh(1), groundMat);
   ground.receiveShadow = true; scene.add(ground);
   // flat apron beyond the LiDAR extent, with a hole where the terrain mesh is
@@ -25,7 +29,7 @@ export function buildWorld(data, T, scene, env) {
   apronShape.holes.push(new THREE.Path([[bx0 + 2, by0 + 2], [bx0 + 2, by1 - 2], [bx1 - 2, by1 - 2], [bx1 - 2, by0 + 2]].map(([x, y]) => new THREE.Vector2(x, y))));
   const apronG = new THREE.ShapeGeometry(apronShape); apronG.rotateX(-Math.PI / 2);
   { const uv = apronG.attributes.uv, p = apronG.attributes.position; for (let i = 0; i < uv.count; i++) uv.setXY(i, p.getX(i) / 24, -p.getZ(i) / 24); }
-  const apron = new THREE.Mesh(apronG, new THREE.MeshStandardMaterial({ map: T.ground.base, ...matOpts }));
+  const apron = new THREE.Mesh(apronG, addDetail(new THREE.MeshStandardMaterial(S ? S.set('leafy_grass', 24 / 8) : { map: T.ground.base, ...matOpts }), 5.1, 0.35, tintOf('leafy_grass', '#587631')));
   apron.position.y = 1.0; apron.receiveShadow = true; scene.add(apron);
   // Drape a flat GeoBuilder onto the terrain (y values become offsets above grade)
   const draped = (gb, maxLen = 6) => {
@@ -40,9 +44,9 @@ export function buildWorld(data, T, scene, env) {
 
   // ---------------- areas ----------------
   const AREA = {
-    residential: { y: 0.012, tex: T.ground.residential, s: 24 }, farm: { y: 0.014, tex: T.ground.farm, s: 20 }, cemetery: { y: 0.014, tex: T.ground.cemetery, s: 20 },
-    golf: { y: 0.016, tex: T.ground.golf, s: 30 }, meadow: { y: 0.016, tex: T.ground.meadow, s: 20 }, grass: { y: 0.02, tex: T.ground.lawn, s: 18 },
-    wood: { y: 0.022, tex: T.ground.wood, s: 16 }, paved: { y: 0.03, tex: T.concrete, s: 16, col: 0xbdb7aa }, plaza: { y: 0.034, tex: T.concrete, s: 8 },
+    residential: { y: 0.012, tex: T.ground.residential, s: 24, scan: 'leafy_grass', tile: 5, tint: '#607b37' }, farm: { y: 0.014, tex: T.ground.farm, s: 20 }, cemetery: { y: 0.014, tex: T.ground.cemetery, s: 20, scan: 'leafy_grass', tile: 5, tint: '#5a7834' },
+    golf: { y: 0.016, tex: T.ground.golf, s: 30, scan: 'leafy_grass', tile: 7, tint: '#4e8a35' }, meadow: { y: 0.016, tex: T.ground.meadow, s: 20, scan: 'leafy_grass', tile: 4, tint: '#8a8747' }, grass: { y: 0.02, tex: T.ground.lawn, s: 18, scan: 'leafy_grass', tile: 4.5, tint: '#5e7e34' },
+    wood: { y: 0.022, tex: T.ground.wood, s: 16, scan: 'forest_leaves_02', tile: 4 }, paved: { y: 0.03, tex: T.concrete, s: 16, scan: 'concrete_pavement', tile: 3, tint: '#a9a396' }, plaza: { y: 0.034, tex: T.concrete, s: 8, scan: 'concrete_pavement', tile: 2.5, tint: '#b8b1a3' },
     playground: { y: 0.036, tex: null, col: 0x8a4b3a }, parking: { y: 0.04, tex: T.parking, s: 20, obb: true },
     pitch: { y: 0.045, tex: T.pitch, s: 40, obb: true }, turf: { y: 0.045, tex: T.pitch, s: 40, obb: true }, court: { y: 0.046, tex: null, col: 0x3d6e5a },
   };
@@ -61,8 +65,9 @@ export function buildWorld(data, T, scene, env) {
   }
   for (const [t, gb] of Object.entries(areaB)) {
     const cfg = AREA[t];
-    const mat = new THREE.MeshStandardMaterial({ map: cfg.tex || null, color: cfg.col || 0xffffff, ...matOpts });
-    if (cfg.tex && t !== 'parking' && t !== 'pitch' && t !== 'turf') addDetail(mat, 6.1, 0.4);
+    const useScan = cfg.scan && S && S[cfg.scan];
+    const mat = new THREE.MeshStandardMaterial(useScan ? S.set(cfg.scan, cfg.s / cfg.tile) : { map: cfg.tex || null, color: cfg.col || 0xffffff, ...matOpts });
+    if (cfg.tex && t !== 'parking' && t !== 'pitch' && t !== 'turf') addDetail(mat, useScan ? 4.3 : 6.1, useScan ? 0.3 : 0.4, useScan && cfg.tint ? tintOf(cfg.scan, cfg.tint) : null);
     const m = new THREE.Mesh(draped(gb), mat);
     m.receiveShadow = true; scene.add(m);
   }
@@ -70,8 +75,19 @@ export function buildWorld(data, T, scene, env) {
   // ---------------- water ----------------
   {
     const pos = [], idx = [];
-    const planeY = waterPolys.reduce((m, a) => Math.max(m, a.level ?? 0), -1e9);
-    for (const a of waterPolys) {
+    // One mirror for the big lakes at their real level; ponds/pools elsewhere get glossy standard water (no extra pass)
+    const big = waterPolys.filter((a) => Math.abs(area(a.o)) > 20000);
+    const lakeW = big.reduce((s2, a) => s2 + Math.abs(area(a.o)), 0) || 1;
+    const planeY = big.length ? big.reduce((s2, a) => s2 + (a.level ?? 0) * Math.abs(area(a.o)), 0) / lakeW : 0;
+    const mirrored = waterPolys.filter((a) => Math.abs((a.level ?? 0) - planeY) < 2.5);
+    const glossy = waterPolys.filter((a) => !mirrored.includes(a));
+    {
+      const gb = new GeoBuilder();
+      for (const a of glossy) capPoly(gb, a.o, a.hl, (a.level ?? 0) + 0.02, 6, [1, 1, 1]);
+      const gm = new THREE.Mesh(gb.build(), new THREE.MeshStandardMaterial({ color: 0x1f3a33, roughness: 0.04, metalness: 0.0, envMapIntensity: 1.2 }));
+      gm.receiveShadow = true; scene.add(gm);
+    }
+    for (const a of mirrored) {
       const contour = a.o.map((p) => new THREE.Vector2(p[0], p[1]));
       const holes = (a.hl || []).map((r) => r.map((p) => new THREE.Vector2(p[0], p[1])));
       let faces; try { faces = THREE.ShapeUtils.triangulateShape(contour, holes); } catch (e) { continue; }
@@ -88,11 +104,18 @@ export function buildWorld(data, T, scene, env) {
     // Make all faces point +z
     const water = new Water(g, {
       textureWidth: 1024, textureHeight: 1024, waterNormals: T.waterNormals,
-      sunDirection: env.sunDir.clone(), sunColor: 0xfff0d8, waterColor: 0x1a3440, distortionScale: 2.2, fog: true,
+      sunDirection: env.sunDir.clone(), sunColor: 0xfff0d8, waterColor: 0x2c4a3c, distortionScale: 0.9, fog: true, alpha: 1.0,
     });
     water.material.side = THREE.DoubleSide;
     water.rotation.x = -Math.PI / 2; water.position.y = planeY;
-    water.material.uniforms.size.value = 1.5;
+    water.material.uniforms.size.value = 0.35; // broad, gentle ripples
+    // three's Water uses rf0 = 0.3 and a grey floor, which reads as brushed metal; water is ~0.02
+    water.material.fragmentShader = water.material.fragmentShader.replace('float rf0 = 0.3;', 'float rf0 = 0.02;').replace('( vec3( 0.1 ) + reflectionSample * 0.9 + reflectionSample * specularLight )', '( reflectionSample * 0.85 + reflectionSample * specularLight )')
+      .replace('vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor;', 'vec3 scatter = (0.55 + 0.45 * max( 0.0, dot( surfaceNormal, eyeDirection ) )) * waterColor; reflectance = min(reflectance, 0.62);');
+    water.material.needsUpdate = true;
+    // Reflector's oblique-near-plane clipping doesn't survive logarithmic depth, so clip explicitly during the mirror pass
+    { const orig = water.onBeforeRender.bind(water);
+      water.onBeforeRender = (r, s2, c) => { MIRROR_CLIP.constant = -(planeY - 0.3); try { orig(r, s2, c); } finally { MIRROR_CLIP.constant = 1e6; } }; }
     scene.add(water);
     out.water = water;
     // shoreline: darker muddy band + reeds hint
@@ -157,8 +180,8 @@ export function buildWorld(data, T, scene, env) {
         }
       }
     }
-    const rm = new THREE.Mesh(draped(road, 4), addDetail(new THREE.MeshStandardMaterial({ map: T.asphalt, roughness: 0.95 }), 5.3, 0.4));
-    const pm = new THREE.Mesh(draped(path, 4), new THREE.MeshStandardMaterial({ map: T.concrete, roughness: 0.9 }));
+    const rm = new THREE.Mesh(draped(road, 4), addDetail(new THREE.MeshStandardMaterial(S ? S.set('asphalt_02', 10 / 6, { color: 0x9a9a9a }) : { map: T.asphalt, roughness: 0.95 }), 3.7, 0.3));
+    const pm = new THREE.Mesh(draped(path, 4), S ? addDetail(new THREE.MeshStandardMaterial(S.set('concrete_pavement', 8 / 2.6)), 3.1, 0.25, tintOf('concrete_pavement', '#bdb6a7')) : new THREE.MeshStandardMaterial({ map: T.concrete, roughness: 0.9 }));
     const lm = new THREE.Mesh(draped(paint, 4), new THREE.MeshStandardMaterial({ color: 0xd8b23a, roughness: 0.7 }));
     for (const m of [rm, pm, lm]) { m.receiveShadow = true; scene.add(m); }
     // rail line
@@ -337,8 +360,11 @@ export function buildWorld(data, T, scene, env) {
     }
     flush();
     const mk = (gb, mat) => { if (!gb.count) return; const m = new THREE.Mesh(gb.build(), mat); m.castShadow = true; m.receiveShadow = true; scene.add(m); return m; };
-    walls.forEach((gb, k) => mk(gb, facadePatch(new THREE.MeshStandardMaterial({ map: T.facade[k].map, roughnessMap: T.facade[k].mask, normalMap: T.facade[k].normal, vertexColors: true, roughness: 1, metalness: 0.0, envMapIntensity: 1.0 }), { bay: BAY[k][0], floor: BAY[k][1], stone: k === 0 ? 1 : 0, interior: k === 6 ? 0 : 1, key: k })));
-    for (const [k, gb] of Object.entries(roofs)) mk(gb, new THREE.MeshStandardMaterial({ map: T.roof[k].map, roughnessMap: T.roof[k].mask, normalMap: T.roof[k].normal, vertexColors: true, roughness: 1, metalness: k === 'lead' || k === 'copper' ? 0.35 : 0 }));
+    const sc = (id, hex, tile) => (S && S[id] ? { scan: S[id], tint: hex ? new THREE.Color(hex) : S[id].avg.clone(), tile } : null);
+    const FACADE_SCANS = { 0: { brick: sc('brick_wall_001', '#d8caa5', 1.6), lime: sc('large_sandstone_blocks', '#e3d9c3', 3.2) }, 2: { brick: sc('large_red_bricks', null, 1.8) }, 6: { brick: sc('large_red_bricks', '#b98365', 1.8) } };
+    walls.forEach((gb, k) => mk(gb, facadePatch(new THREE.MeshStandardMaterial({ map: T.facade[k].map, roughnessMap: T.facade[k].mask, normalMap: T.facade[k].normal, vertexColors: true, roughness: 1, metalness: 0.0, envMapIntensity: 1.0 }), { bay: BAY[k][0], floor: BAY[k][1], stone: k === 0 ? 1 : 0, interior: k === 6 ? 0 : 1, key: k + (FACADE_SCANS[k] ? 's' : ''), ...(FACADE_SCANS[k] || {}) })));
+    const ROOF_SCAN = { slate: 'grey_roof_tiles', tile: 'clay_roof_tiles_02', shingle: 'grey_roof_01' };
+    for (const [k, gb] of Object.entries(roofs)) mk(gb, new THREE.MeshStandardMaterial(ROOF_SCAN[k] && S?.[ROOF_SCAN[k]] ? S.set(ROOF_SCAN[k], 2, { vertexColors: true, color: k === 'slate' ? 0x9aa0a8 : 0xffffff }) : { map: T.roof[k].map, roughnessMap: T.roof[k].mask, normalMap: T.roof[k].normal, vertexColors: true, roughness: 1, metalness: k === 'lead' || k === 'copper' ? 0.35 : 0 }));
     mk(trim, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.8 }));
     mk(units, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.6, metalness: 0.3 }));
   }

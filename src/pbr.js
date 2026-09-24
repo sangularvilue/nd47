@@ -8,15 +8,15 @@ const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 function mk(S) { const c = document.createElement('canvas'); c.width = c.height = S; return [c, c.getContext('2d')]; }
 
 class Layers {
-  constructor(S) { this.S = S; [this.cA, this.a] = mk(S); [this.cH, this.h] = mk(S); [this.cM, this.m] = mk(S); }
+  constructor(S) { this.S = S; this.b = 0; [this.cA, this.a] = mk(S); [this.cH, this.h] = mk(S); [this.cM, this.m] = mk(S); }
   // a: css colour, hv: height 0..255, win 0/1, rough 0..1
   rect(x, y, w, h, a, hv, win = 0, rough = 0.9) {
     this.a.fillStyle = a; this.a.fillRect(x, y, w, h);
     this.h.fillStyle = `rgb(${hv},${hv},${hv})`; this.h.fillRect(x, y, w, h);
-    this.m.fillStyle = `rgb(${win * 255 | 0},${rough * 255 | 0},0)`; this.m.fillRect(x, y, w, h);
+    this.m.fillStyle = `rgb(${win * 255 | 0},${rough * 255 | 0},${this.b})`; this.m.fillRect(x, y, w, h);
   }
   path(fn, a, hv, win = 0, rough = 0.9) {
-    for (const [g, style] of [[this.a, a], [this.h, `rgb(${hv},${hv},${hv})`], [this.m, `rgb(${win * 255 | 0},${rough * 255 | 0},0)`]]) { g.fillStyle = style; g.beginPath(); fn(g); g.fill(); }
+    for (const [g, style] of [[this.a, a], [this.h, `rgb(${hv},${hv},${hv})`], [this.m, `rgb(${win * 255 | 0},${rough * 255 | 0},${this.b})`]]) { g.fillStyle = style; g.beginPath(); fn(g); g.fill(); }
   }
   // albedo-only speckle (weathering)
   speckle(n, amp, size = 2) {
@@ -47,12 +47,14 @@ export function heightToNormal(src, strength) {
 }
 
 function brickField(L, x0, y0, w, h, bw, bh, base, jitter, mortar) {
+  const pb = L.b; L.b = 255;
   L.rect(x0, y0, w, h, mortar, 120, 0, 0.95);
   for (let y = 0, row = 0; y < h; y += bh, row++) for (let x = row % 2 ? -bw / 2 : 0; x < w; x += bw) {
     const j = (rnd() - 0.5) * jitter, [r, g, b] = base;
     const burnt = rnd() < 0.06 ? -0.12 : 0;
     L.rect(x0 + x + 1, y0 + y + 1, bw - 2, bh - 2, `rgb(${(r + (j + burnt) * 255) | 0},${(g + (j + burnt) * 235) | 0},${(b + (j + burnt) * 200) | 0})`, 175 + (rnd() * 30 | 0), 0, 0.82 + rnd() * 0.1);
   }
+  L.b = pb;
 }
 
 // ---- Facade tiles: one structural bay (u) x one storey (v), 512 px
@@ -60,23 +62,24 @@ export function facadeND() {
   const S = 512, L = new Layers(S);
   brickField(L, 0, 0, S, S, 42, 13, [216, 192, 142], 0.07, '#c9b893');
   const wx = 146, ww = 220, wy = 84, wh = 330;
-  // limestone surround + pointed head
+  L.b = 128; // limestone surround + pointed head
   L.rect(wx - 22, wy - 10, ww + 44, wh + 26, '#e6dcc4', 225, 0, 0.75);
   L.path((g) => { g.moveTo(wx - 22, wy); g.lineTo(wx + ww / 2, wy - 56); g.lineTo(wx + ww + 22, wy); g.closePath(); }, '#e6dcc4', 225, 0, 0.75);
   // reveal (recessed stone)
   L.rect(wx - 6, wy - 2, ww + 12, wh + 6, '#cfc4ab', 150, 0, 0.8);
   L.path((g) => { g.moveTo(wx - 6, wy + 2); g.lineTo(wx + ww / 2, wy - 40); g.lineTo(wx + ww + 6, wy + 2); g.closePath(); }, '#cfc4ab', 150, 0, 0.8);
-  // glass
+  L.b = 0; // glass
   L.rect(wx, wy, ww, wh, '#101418', 60, 1, 0.06);
   L.path((g) => { g.moveTo(wx, wy + 2); g.lineTo(wx + ww / 2, wy - 34); g.lineTo(wx + ww, wy + 2); g.closePath(); }, '#101418', 60, 1, 0.06);
-  // stone mullion + transom, lead cames
+  L.b = 128; // stone mullion + transom, lead cames
   L.rect(wx + ww / 2 - 9, wy - 34, 18, wh + 34, '#ddd2b9', 200, 0, 0.7);
   L.rect(wx, wy + 104, ww, 14, '#ddd2b9', 200, 0, 0.7);
-  for (const f of [0.25, 0.75]) L.rect(wx + ww * f - 2, wy, 4, wh, '#2d2a26', 90, 0, 0.5);
+  L.b = 0; for (const f of [0.25, 0.75]) L.rect(wx + ww * f - 2, wy, 4, wh, '#2d2a26', 90, 0, 0.5);
   for (let y = wy + 20; y < wy + wh; y += 26) L.rect(wx, y, ww, 2, '#2d2a26', 90, 0, 0.5);
-  // sill + string course at the floor line
+  L.b = 128; // sill + string course at the floor line
   L.rect(wx - 30, wy + wh + 12, ww + 60, 18, '#ede3cc', 235, 0, 0.7);
   L.rect(0, S - 10, S, 10, '#e2d8c0', 215, 0, 0.75);
+  L.b = 0;
   L.speckle(9000, 0.08, 2); L.heightNoise(6000, 0.15, 2);
   // weathering streaks below sill
   for (let i = 0; i < 20; i++) { const x = wx - 20 + rnd() * (ww + 40); L.a.fillStyle = 'rgba(70,60,40,0.06)'; L.a.fillRect(x, wy + wh + 30, 3 + rnd() * 5, 30 + rnd() * 50); }

@@ -29,7 +29,7 @@ function woodGeo(rng) {
     b.rotateZ(0.75 + rng() * 0.35); b.rotateY(a); b.translate(0, 4.2 + rng() * 1.0, 0);
     parts.push(b);
   }
-  const g = mergeGeometries(parts.map((p) => { const n = p.toNonIndexed(); n.deleteAttribute('uv'); return n; }));
+  const g = mergeGeometries(parts.map((p) => p.toNonIndexed()));
   return withColor(g, (x, y) => 0.8 + 0.2 * Math.min(1, y / 5));
 }
 // Leaf cards scattered over a lumpy canopy volume, with spherical normals for soft lighting.
@@ -90,7 +90,8 @@ export function buildTrees(list, scene, T) {
   const woods = Array.from({ length: VAR }, () => woodGeo(rng));
   const cards = Array.from({ length: VAR }, () => cardsGeo(rng));
   const core = coreGeo(), cone = coniferGeo();
-  const bark = new THREE.MeshStandardMaterial({ map: T.bark.map, normalMap: T.bark.normal, vertexColors: true, roughness: 0.95 });
+  const bark = new THREE.MeshStandardMaterial(T.scan?.bark_brown_02 ? { ...T.scan.set('bark_brown_02', 1), vertexColors: true } : { map: T.bark.map, normalMap: T.bark.normal, vertexColors: true, roughness: 0.95 });
+  if (bark.map) for (const t of [bark.map, bark.normalMap, bark.roughnessMap]) t && t.repeat.set(2, 3);
   const leafM = windPatch(new THREE.MeshStandardMaterial({ map: T.leaf, alphaTest: 0.42, side: THREE.DoubleSide, vertexColors: true, roughness: 0.78, envMapIntensity: 0.6 }), 1.0, 'leaf');
   patch(leafM, 'billboard', (sh) => {
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 aCenter; attribute vec2 aCorner;')

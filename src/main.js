@@ -8,6 +8,8 @@ import { buildProps } from './props.js';
 import { Terrain, TER } from './terrain.js';
 import { isTouch, setupTouch } from './touch.js';
 import { GoogleReference } from './googletiles.js';
+import { loadScans } from './scans.js';
+import { buildFallingLeaves, buildUndergrowth } from './ambient.js';
 import { makeTextures } from './textures.js';
 import { buildWorld } from './world.js';
 import { buildLandmarks } from './landmarks.js';
@@ -27,6 +29,7 @@ const pixelRatio = () => Math.min(devicePixelRatio, quality === 'ultra' ? 1.5 : 
 renderer.setPixelRatio(pixelRatio());
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.NoToneMapping; // tone mapping runs in the post stack
+renderer.localClippingEnabled = true; // for the lake mirror clip plane
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 
@@ -55,7 +58,7 @@ let yaw = 0, pitch = 0.18, camDist = 4.6;
 const agent = makeAgent();
 const player = { x: 25, y: -250, h: Math.PI, speed: 0 };
 const drone = new THREE.Vector3(), droneRot = { yaw: 0, pitch: -0.3 };
-let world, L, people, hud, collider, grass, worldObjs = [];
+let world, L, people, hud, collider, grass, leaves, worldObjs = [];
 // Google Photorealistic 3D Tiles reference (G cycles off → Google only → both; key entered in the Reference panel)
 const gref = new GoogleReference(scene, camera, renderer);
 const REF_MODES = ['off', 'google', 'both'];
@@ -85,6 +88,8 @@ async function init() {
   const T = makeTextures();
   status('Loading campus survey (OpenStreetMap)…'); await tick();
   const data = await (await fetch('data/campus.json')).json();
+  status('Loading scanned materials (Poly Haven, CC0)…'); await tick();
+  T.scan = await loadScans(renderer, (d, n) => status(`Loading scanned materials… ${d}/${n}`));
   const before = new Set(scene.children);
   status('Laying LiDAR terrain…'); await tick();
   const b64 = await (await fetch('data/dtm.b64.txt')).text();
@@ -101,6 +106,8 @@ async function init() {
   status('Placing benches, lamps & crosswalks…'); await tick();
   buildProps(data, scene);
   grass = quality === 'low' ? null : buildGrass(data, scene);
+  buildUndergrowth(data, scene, T);
+  leaves = buildFallingLeaves(scene, T, quality === 'low' ? 300 : 900);
   collider = new Collider([...world.colliders, ...world.waterPolys.map((w) => ({ o: w.o, hl: [] }))]);
   hud = buildHud(data, L);
   worldObjs = scene.children.filter((c) => !before.has(c));
@@ -233,6 +240,7 @@ function loop() {
   G.time.value += dt;
   camera.updateMatrixWorld();
   csm.update();
+  if (leaves) leaves.update(camera.position);
   if (grass) { grass.update(camera.position); if (gref.mode === 'google') grass.mesh.visible = false; }
   skyObj.update(dt, camera.position);
   gref.update();
